@@ -1,0 +1,33 @@
+{
+  "name": "method-project",
+  "version": "1.0.1",
+  "description": "Method project with Telegram bot and web app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "deploy": "firebase deploy",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "webapp"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "18": "^0.0.0",
+    "axios": "^1.7.3",
+    "body-parser": "^1.19.0",
+    "dotenv": "^10.0.0",
+    "express": "^4.17.1",
+    "express-rate-limit": "^7.4.0",
+    "firebase": "^9.23.0",
+    "firebase-admin": "^11.5.0",
+    "firebase-functions": "^5.0.1",
+    "telegraf": "^4.16.3"
+  },
+  "engines": {
+    "node": "18"
+  }
+}
