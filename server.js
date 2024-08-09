@@ -6,12 +6,13 @@ const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
 const { Telegraf, Markup } = require('telegraf');
 const cors = require('cors');
-app.use(cors());
+
 
 
 const app = express();
 app.set('trust proxy', 1);
 app.use(bodyParser.json());
+app.use(cors());
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
 admin.initializeApp({
