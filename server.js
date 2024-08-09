@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
 const { Telegraf, Markup } = require('telegraf');
+const cors = require('cors');
+app.use(cors());
 
 
 const app = express();
@@ -317,7 +319,7 @@ app.post('/botWebhook', (req, res) => {
     res.sendStatus(200);
   });
   app.get('/firebase-config', (req, res) => {
-    const firebaseConfig = {
+    const publicFirebaseConfig = {
       apiKey: process.env.FIREBASE_API_KEY,
       authDomain: process.env.FIREBASE_AUTH_DOMAIN,
       databaseURL: process.env.FIREBASE_DATABASE_URL,
@@ -327,7 +329,7 @@ app.post('/botWebhook', (req, res) => {
       appId: process.env.FIREBASE_APP_ID,
       measurementId: process.env.FIREBASE_MEASUREMENT_ID
     };
-    res.json(firebaseConfig);
+    res.json(publicFirebaseConfig);
   });
 //логирование для отладки
   app.get('/', (req, res) => {
