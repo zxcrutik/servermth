@@ -74,8 +74,28 @@ async function generateDepositAddress(telegramId) {
 
 app.get('/getDepositAddress', async (req, res) => {
   const telegramId = req.query.telegramId;
-  const address = await generateDepositAddress(telegramId);
-  res.json({ address });
+  if (!telegramId) {
+    return res.status(400).json({ error: 'Telegram ID is required' });
+  }
+
+  try {
+    const keyPair = generateKeyPair();
+    const { wallet, address } = await createWallet(keyPair);
+    
+    // Сохраняем keyPair и address в базу данных, связав с telegramId
+    await database.ref('users/' + telegramId).update({
+      wallet: {
+        publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
+        secretKey: Buffer.from(keyPair.secretKey).toString('hex'),
+        address: address
+      }
+    });
+
+    res.json({ address });
+  } catch (error) {
+    console.error('Error generating deposit address:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 app.get('/checkPaymentStatus', async (req, res) => {
@@ -97,23 +117,21 @@ app.get('/checkPaymentStatus', async (req, res) => {
 app.get('/checkTransactionStatus', async (req, res) => {
   const transactionId = req.query.transactionId;
   if (!transactionId) {
-      return res.status(400).json({ error: 'Transaction ID is required' });
+    return res.status(400).json({ error: 'Transaction ID is required' });
   }
 
   try {
-      // Получаем информацию о транзакции из блокчейна TON
-      const transactionInfo = await tonweb.provider.getTransactions(transactionId);
-      
-      if (transactionInfo && transactionInfo.length > 0) {
-          // Проверяем статус транзакции
-          const status = transactionInfo[0].status; // Предполагаем, что статус доступен в ответе
-          res.json({ status: status === 3 ? 'confirmed' : 'pending' });
-      } else {
-          res.json({ status: 'pending' });
-      }
+    const transactionInfo = await tonweb.provider.getTransactions(transactionId);
+    
+    if (transactionInfo && transactionInfo.length > 0) {
+      const status = transactionInfo[0].status; // Предполагаем, что статус доступен в ответе
+      res.json({ status: status === 3 ? 'confirmed' : 'pending' });
+    } else {
+      res.json({ status: 'pending' });
+    }
   } catch (error) {
-      console.error('Error checking transaction status:', error);
-      res.status(500).json({ error: 'Internal server error' });
+    console.error('Error checking transaction status:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -121,105 +139,106 @@ app.get('/checkTransactionStatus', async (req, res) => {
 app.post('/updateTicketBalance', async (req, res) => {
   const { telegramId, amount, transactionId } = req.body;
   if (!telegramId || !amount || !transactionId) {
-      return res.status(400).json({ error: 'telegramId, amount, and transactionId are required' });
+    return res.status(400).json({ error: 'telegramId, amount, and transactionId are required' });
   }
 
   try {
-      // Проверяем, не была ли эта транзакция уже обработана
-      const transactionRef = database.ref(`processedTransactions/${transactionId}`);
-      const transactionSnapshot = await transactionRef.once('value');
-      if (transactionSnapshot.exists()) {
-          return res.status(400).json({ error: 'Transaction already processed' });
+    // Проверяем, не была ли эта транзакция уже обработана
+    const transactionRef = database.ref(`processedTransactions/${transactionId}`);
+    const transactionSnapshot = await transactionRef.once('value');
+    if (transactionSnapshot.exists()) {
+      return res.status(400).json({ error: 'Transaction already processed' });
+    }
+
+    // Обновляем баланс билетов пользователя
+    const userRef = database.ref(`users/${telegramId}`);
+    await userRef.transaction((userData) => {
+      if (userData) {
+        userData.ticketBalance = (userData.ticketBalance || 0) + amount;
       }
+      return userData;
+    });
 
-      // Обновляем баланс билетов пользователя
-      const userRef = database.ref(`users/${telegramId}`);
-      await userRef.transaction((userData) => {
-          if (userData) {
-              userData.ticketBalance = (userData.ticketBalance || 0) + amount;
-          }
-          return userData;
-      });
+    // Отмечаем транзакцию как обработанную
+    await transactionRef.set(true);
 
-      // Отмечаем транзакцию как обработанную
-      await transactionRef.set(true);
+    // Получаем обновленный баланс
+    const updatedUserSnapshot = await userRef.once('value');
+    const newBalance = updatedUserSnapshot.val().ticketBalance;
 
-      // Получаем обновленный баланс
-      const updatedUserSnapshot = await userRef.once('value');
-      const newBalance = updatedUserSnapshot.val().ticketBalance;
-
-      res.json({ newBalance });
+    res.json({ newBalance });
   } catch (error) {
-      console.error('Error updating ticket balance:', error);
-      res.status(500).json({ error: 'Internal server error' });
+    console.error('Error updating ticket balance:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
+// Функция для обработки депозита
 async function processDeposit(tx) {
   const userRef = database.ref('users').orderByChild('wallet/address').equalTo(tx.account);
   const snapshot = await userRef.once('value');
   const userData = snapshot.val();
 
   if (userData) {
-      const telegramId = Object.keys(userData)[0];
-      const amount = new BN(tx.in_msg.value);
-      
-      // Обновляем баланс пользователя
-      await database.ref('users/' + telegramId + '/balance').transaction(currentBalance => {
-          return (currentBalance || 0) + amount.toNumber();
-      });
+    const telegramId = Object.keys(userData)[0];
+    const amount = new TonWeb.utils.BN(tx.in_msg.value);
+    
+    // Обновляем баланс пользователя
+    await database.ref('users/' + telegramId + '/balance').transaction(currentBalance => {
+      return (currentBalance || 0) + amount.toNumber();
+    });
 
-      // Отмечаем, что платеж получен
-      await database.ref('users/' + telegramId).update({
-          pendingPayment: null,
-          lastPayment: {
-              amount: amount.toNumber(),
-              timestamp: Date.now()
-          }
-      });
-
-      // Логика перевода средств на hot wallet
-      const balance = new BN(await tonweb.provider.getBalance(tx.account));
-
-      if (balance.gt(new BN(0))) {
-        const keyPair = {
-            publicKey: Buffer.from(userData[telegramId].wallet.publicKey, 'hex'),
-            secretKey: Buffer.from(userData[telegramId].wallet.secretKey, 'hex')
-        };
-
-        const depositWallet = createWallet(keyPair);
-        const seqno = await depositWallet.methods.seqno().call();
-
-        const transfer = await depositWallet.methods.transfer({
-            secretKey: keyPair.secretKey,
-            toAddress: MY_HOT_WALLET_ADDRESS,
-            amount: 0, // Отправляем весь баланс
-            seqno: seqno,
-            payload: `Deposit from user ${telegramId}`, // Уникальный payload для идентификации платежа
-            sendMode: 128 + 32, // mode 128 для отправки всего баланса, mode 32 для уничтожения контракта после отправки
-        });
-
-        try {
-          await transfer.send();
-          console.log(`Transfer from deposit wallet ${tx.account} to hot wallet completed`);
-          
-          // Обновляем статус в базе данных
-          await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
-              timestamp: Date.now(),
-              status: 'completed'
-          });
-      } catch (error) {
-          console.error(`Error transferring from deposit wallet to hot wallet:`, error);
-          
-          // Обновляем статус в базе данных
-          await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
-              timestamp: Date.now(),
-              status: 'failed',
-              error: error.message
-          });
+    // Отмечаем, что платеж получен
+    await database.ref('users/' + telegramId).update({
+      pendingPayment: null,
+      lastPayment: {
+        amount: amount.toNumber(),
+        timestamp: Date.now()
       }
+    });
+
+    // Логика перевода средств на hot wallet
+    const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(tx.account));
+
+    if (balance.gt(new TonWeb.utils.BN(0))) {
+      const keyPair = {
+        publicKey: Buffer.from(userData[telegramId].wallet.publicKey, 'hex'),
+        secretKey: Buffer.from(userData[telegramId].wallet.secretKey, 'hex')
+      };
+
+      const depositWallet = createWallet(keyPair);
+      const seqno = await depositWallet.methods.seqno().call();
+
+      const transfer = await depositWallet.methods.transfer({
+        secretKey: keyPair.secretKey,
+        toAddress: MY_HOT_WALLET_ADDRESS,
+        amount: 0, // Отправляем весь баланс
+        seqno: seqno,
+        payload: `Deposit from user ${telegramId}`, // Уникальный payload для идентификации платежа
+        sendMode: 128 + 32, // mode 128 для отправки всего баланса, mode 32 для уничтожения контракта после отправки
+      });
+
+      try {
+        await transfer.send();
+        console.log(`Transfer from deposit wallet ${tx.account} to hot wallet completed`);
+        
+        // Обновляем статус в базе данных
+        await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
+          timestamp: Date.now(),
+          status: 'completed'
+        });
+      } catch (error) {
+        console.error(`Error transferring from deposit wallet to hot wallet:`, error);
+        
+        // Обновляем статус в базе данных
+        await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
+          timestamp: Date.now(),
+          status: 'failed',
+          error: error.message
+        });
+      }
+    }
   }
-}
 }
 
 async function onTransaction(tx) {
