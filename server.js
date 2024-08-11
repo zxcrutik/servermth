@@ -76,15 +76,21 @@ async function generateDepositAddress(telegramId) {
 
 app.get('/getDepositAddress', async (req, res) => {
   const telegramId = req.query.telegramId;
+  console.log('Received request for deposit address. Telegram ID:', telegramId);
+  
   if (!telegramId) {
+    console.log('Telegram ID is missing');
     return res.status(400).json({ error: 'Telegram ID is required' });
   }
 
   try {
-    const keyPair = generateKeyPair();
+    console.log('Generating key pair');
+    const keyPair = await createKeyPair(); // Убедитесь, что здесь используется await
+
+    console.log('Creating wallet');
     const { wallet, address } = await createWallet(keyPair);
     
-    // Сохраняем keyPair и address в базу данных, связав с telegramId
+    console.log('Saving wallet info to database');
     await database.ref('users/' + telegramId).update({
       wallet: {
         publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
@@ -93,10 +99,11 @@ app.get('/getDepositAddress', async (req, res) => {
       }
     });
 
+    console.log('Deposit address generated successfully:', address);
     res.json({ address });
   } catch (error) {
     console.error('Error generating deposit address:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
