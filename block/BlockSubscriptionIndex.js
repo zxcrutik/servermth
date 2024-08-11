@@ -27,22 +27,51 @@ class BlockSubscriptionIndex {
     async start() {
         await this.loadLastProcessedBlock();
 
-        while (true) {
-            try {
-                const response = await axios.get(`${this.indexApiUrl}getBlockTransactions?workchain=-1&shard=-9223372036854775808&seqno=${this.lastProcessedMasterchainBlockNumber}&apiKey=${this.apiKey}`);
-                const transactions = response.data.result;
-                
-                for (const tx of transactions) {
-                    await this.onTransaction(tx);
-                }
-
-                this.lastProcessedMasterchainBlockNumber++;
-                await this.saveLastProcessedBlock();
-            } catch (error) {
-                console.error('Error in BlockSubscriptionIndex:', error);
-                await new Promise(resolve => setTimeout(resolve, 1000));
+        const getTransactionsByMasterchainSeqno = async (masterchainBlockNumber) => {
+            const headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-API-Key': this.apiKey
+            };
+            const url = `${this.indexApiUrl}getTransactionsByMasterchainSeqno?seqno=${masterchainBlockNumber}`;
+            const response = await axios.get(url, { headers });
+            if (response.data.error) {
+                throw new Error(response.data.error);
             }
-        }
+            return response.data;
+        };
+
+        let isProcessing = false;
+
+        const tick = async () => {
+            if (isProcessing) return;
+            isProcessing = true;
+
+            try {
+                const masterchainInfo = await this.tonweb.provider.getMasterchainInfo();
+                const lastMasterchainBlockNumber = masterchainInfo.last.seqno;
+
+                if (lastMasterchainBlockNumber > this.lastProcessedMasterchainBlockNumber) {
+                    const masterchainBlockNumber = this.lastProcessedMasterchainBlockNumber + 1;
+                    const transactions = await getTransactionsByMasterchainSeqno(masterchainBlockNumber);
+
+                    console.log(`Got masterchain block ${masterchainBlockNumber} and related shard blocks`);
+
+                    for (const tx of transactions) {
+                        await this.onTransaction(tx);
+                    }
+
+                    this.lastProcessedMasterchainBlockNumber = masterchainBlockNumber;
+                    await this.saveLastProcessedBlock();
+                }
+            } catch (e) {
+                console.error('Error in BlockSubscriptionIndex:', e);
+            }
+
+            isProcessing = false;
+        };
+
+        setInterval(tick, 1000);
     }
 }
 
