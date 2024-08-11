@@ -45,18 +45,6 @@ const updateBalanceLimiter = rateLimit({
   max: 500 // ограничение каждого IP до 10 запросов на обновление баланса за час
 });
 
-app.post('/updateTicketBalance', authenticateToken, updateBalanceLimiter, async (req, res) => {
-    const { amount } = req.body;
-    const telegramId = req.user.telegramId;
-    try {
-        await updateTicketBalance(telegramId, amount);
-        res.sendStatus(200);
-    } catch (error) {
-        console.error('Error updating ticket balance:', error);
-        res.status(500).json({ error: 'Failed to update ticket balance' });
-    }
-});
-
 // Функция защиты
 function verifyTelegramData(telegramData) {
     const secret = crypto.createHash('sha256')
@@ -72,33 +60,6 @@ function verifyTelegramData(telegramData) {
         .digest('hex');
     return hmac === telegramData.hash;
 }
-app.post('/auth', (req, res) => {
-    const telegramData = req.body;
-    if (verifyTelegramData(telegramData)) {
-        const token = crypto.randomBytes(64).toString('hex');
-        // Сохраняем токен в Firebase
-        firebase.database().ref(`users/${telegramData.id}/authToken`).set(token);
-        res.json({ token });
-    } else {
-        res.status(401).json({ error: 'Unauthorized' });
-    }
-});
-
-// Защищенный роут для получения данных пользователя
-app.get('/user/:telegramId', authenticateToken, (req, res) => {
-  const telegramId = req.params.telegramId;
-  if (req.user.id.toString() !== telegramId) {
-      return res.status(403).json({ error: 'Forbidden' });
-  }
-  database.ref(`users/${telegramId}`).once('value', snapshot => {
-      if (snapshot.exists()) {
-          res.json(snapshot.val());
-      } else {
-          res.status(404).json({ error: 'User not found' });
-      }
-  });
-});
-
 
 // Роут аутентификации
 app.post('/auth', (req, res) => {
@@ -106,44 +67,12 @@ app.post('/auth', (req, res) => {
     if (verifyTelegramData(telegramData)) {
         const token = crypto.randomBytes(64).toString('hex');
         // Сохраняем токен в Firebase
-        database.ref(`users/${telegramData.id}/authToken`).set(token);
+        database.ref(`users/${telegramData.id}`).set(token);
         res.json({ token });
     } else {
         res.status(401).json({ error: 'Unauthorized' });
     }
 });
-
-// Защищенный роут для получения данных пользователя
-app.get('/user/:telegramId', authenticateToken, (req, res) => {
-    const telegramId = req.params.telegramId;
-    if (req.user.id.toString() !== telegramId) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
-    database.ref(`users/${telegramId}`).once('value', snapshot => {
-        if (snapshot.exists()) {
-            res.json(snapshot.val());
-        } else {
-            res.status(404).json({ error: 'User not found' });
-        }
-    });
-});
-
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (token == null) return res.sendStatus(401);
-
-  admin.database().ref('users').orderByChild('authToken').equalTo(token).once('value', (snapshot) => {
-    if (snapshot.exists()) {
-      req.user = Object.values(snapshot.val())[0];
-      next();
-    } else {
-      res.sendStatus(403);
-    }
-  });
-}
-
 
 // Добавляем новые функции для работы с базой данных
 async function getUserData(telegramId) {
@@ -158,12 +87,10 @@ async function createUser(telegramId, telegramUsername) {
     totalFarmed: 0,
     mthtotalfarmed: 0,
     ticketBalance: 1,
+    clickCount: 0,
+    lastClickTime: 0,
     friendsCount: 0,
-    tasks: {
-      task1: { completed: false },
-      task2: { completed: false },
-      task3: { completed: false }
-    },
+    bonusEndTime: 0,
     farmingState: {
       isActive: false,
       startTime: null,
@@ -297,43 +224,30 @@ app.post('/botWebhook', (req, res) => {
     bot.handleUpdate(req.body, res);
   });
   
-  app.get('/getUserData', authenticateToken, async (req, res) => {
+  app.get('/getUserData', async (req, res) => {
     const telegramId = req.user.telegramId;
     const userData = await getUserData(telegramId);
     res.json(userData);
   });
   
-  app.post('/createUser', authenticateToken, async (req, res) => {
+  app.post('/createUser', async (req, res) => {
     const { telegramUsername } = req.body;
     const telegramId = req.user.telegramId;
     await createUser(telegramId, telegramUsername);
     res.sendStatus(200);
   });
   
-  app.get('/getUserReferralLink', authenticateToken, async (req, res) => {
+  app.get('/getUserReferralLink', async (req, res) => {
     const telegramId = req.user.telegramId;
     const referralLink = await getUserReferralLink(telegramId);
     res.json({ referralLink });
   });
   
-  app.post('/updateTicketBalance', authenticateToken, updateBalanceLimiter, async (req, res) => {
+  app.post('/updateTicketBalance', updateBalanceLimiter, async (req, res) => {
     const { amount } = req.body;
     const telegramId = req.user.telegramId;
     await updateTicketBalance(telegramId, amount);
     res.sendStatus(200);
-  });
-  app.get('/firebase-config', (req, res) => {
-    const firebaseConfig = {
-      apiKey: process.env.FIREBASE_API_KEY,
-      authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-      databaseURL: process.env.FIREBASE_DATABASE_URL,
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
-      appId: process.env.FIREBASE_APP_ID,
-      measurementId: process.env.FIREBASE_MEASUREMENT_ID
-    };
-    res.json(firebaseConfig);
   });
 //логирование для отладки
   app.get('/', (req, res) => {
