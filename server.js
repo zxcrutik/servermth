@@ -19,7 +19,9 @@ app.set('trust proxy', 1);
 app.use(bodyParser.json());
 // В начале файла, после создания приложения express
 app.use(cors({
-  origin: 'https://method-e6c6c.web.app'
+  origin: 'https://method-e6c6c.web.app',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');

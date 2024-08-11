@@ -16,7 +16,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "18": "^0.0.0",
     "@tonconnect/ui": "^2.0.8",
     "axios": "^1.7.3",
     "body-parser": "^1.19.0",
@@ -26,7 +25,6 @@
     "express-rate-limit": "^7.4.0",
     "firebase": "^9.23.0",
     "firebase-admin": "^11.5.0",
-    "firebase-functions": "^5.0.1",
     "telegraf": "^4.16.3",
     "tonweb": "^0.0.66"
   },
