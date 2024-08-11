@@ -93,6 +93,68 @@ app.get('/checkPaymentStatus', async (req, res) => {
   }
 });
 
+// Эндпоинт для проверки статуса транзакции
+app.get('/checkTransactionStatus', async (req, res) => {
+  const transactionId = req.query.transactionId;
+  if (!transactionId) {
+      return res.status(400).json({ error: 'Transaction ID is required' });
+  }
+
+  try {
+      // Получаем информацию о транзакции из блокчейна TON
+      const transactionInfo = await tonweb.provider.getTransactions(transactionId);
+      
+      if (transactionInfo && transactionInfo.length > 0) {
+          // Проверяем статус транзакции
+          const status = transactionInfo[0].status; // Предполагаем, что статус доступен в ответе
+          res.json({ status: status === 3 ? 'confirmed' : 'pending' });
+      } else {
+          res.json({ status: 'pending' });
+      }
+  } catch (error) {
+      console.error('Error checking transaction status:', error);
+      res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Эндпоинт для обновления баланса билетов пользователя
+app.post('/updateTicketBalance', async (req, res) => {
+  const { telegramId, amount, transactionId } = req.body;
+  if (!telegramId || !amount || !transactionId) {
+      return res.status(400).json({ error: 'telegramId, amount, and transactionId are required' });
+  }
+
+  try {
+      // Проверяем, не была ли эта транзакция уже обработана
+      const transactionRef = database.ref(`processedTransactions/${transactionId}`);
+      const transactionSnapshot = await transactionRef.once('value');
+      if (transactionSnapshot.exists()) {
+          return res.status(400).json({ error: 'Transaction already processed' });
+      }
+
+      // Обновляем баланс билетов пользователя
+      const userRef = database.ref(`users/${telegramId}`);
+      await userRef.transaction((userData) => {
+          if (userData) {
+              userData.ticketBalance = (userData.ticketBalance || 0) + amount;
+          }
+          return userData;
+      });
+
+      // Отмечаем транзакцию как обработанную
+      await transactionRef.set(true);
+
+      // Получаем обновленный баланс
+      const updatedUserSnapshot = await userRef.once('value');
+      const newBalance = updatedUserSnapshot.val().ticketBalance;
+
+      res.json({ newBalance });
+  } catch (error) {
+      console.error('Error updating ticket balance:', error);
+      res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 async function processDeposit(tx) {
   const userRef = database.ref('users').orderByChild('wallet/address').equalTo(tx.account);
   const snapshot = await userRef.once('value');
