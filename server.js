@@ -9,6 +9,7 @@ const TonWeb = require('tonweb');
 const { tonweb, createWallet, generateKeyPair, IS_TESTNET, TONCENTER_API_KEY, INDEX_API_URL } = require('./common');
 const BlockSubscriptionIndex = require('./block/BlockSubscriptionIndex');
 const BN = TonWeb.utils.BN;
+   const cors = require('cors');
 
 
 const MY_HOT_WALLET_ADDRESS = 'UQA1vA2bxiZinSSAVLXObmjWiDwMlkZx7kDmHQdypYMUqquT';
@@ -16,6 +17,10 @@ const MY_HOT_WALLET_ADDRESS = 'UQA1vA2bxiZinSSAVLXObmjWiDwMlkZx7kDmHQdypYMUqquT'
 const app = express();
 app.set('trust proxy', 1);
 app.use(bodyParser.json());
+// В начале файла, после создания приложения express
+app.use(cors({
+  origin: 'https://method-e6c6c.web.app'
+}));
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
 admin.initializeApp({
