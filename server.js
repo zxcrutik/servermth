@@ -85,10 +85,12 @@ app.get('/getDepositAddress', async (req, res) => {
 
   try {
     console.log('Generating key pair');
-    const keyPair = await createKeyPair(); // Убедитесь, что здесь используется await
+    const keyPair = await createKeyPair();
+    console.log('Key pair generated:', keyPair);
 
     console.log('Creating wallet');
     const { wallet, address } = await createWallet(keyPair);
+    console.log('Wallet created, address:', address);
     
     console.log('Saving wallet info to database');
     await database.ref('users/' + telegramId).update({
@@ -103,7 +105,7 @@ app.get('/getDepositAddress', async (req, res) => {
     res.json({ address });
   } catch (error) {
     console.error('Error generating deposit address:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ error: 'Internal server error', details: error.message, stack: error.stack });
   }
 });
 
