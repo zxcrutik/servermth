@@ -117,22 +117,6 @@ async function getUserReferralLink(telegramId) {
   }
 }
 
-async function updateTicketBalance(telegramId, amount) {
-    const userRef = database.ref(`users/${telegramId}`);
-    const snapshot = await userRef.once('value');
-    
-    if (snapshot.exists()) {
-        const userData = snapshot.val();
-        const currentBalance = userData.ticketBalance || 0;
-        const newBalance = currentBalance + amount;
-        
-        await userRef.update({ ticketBalance: newBalance });
-        console.log(`Ticket balance updated for user ${telegramId}. New balance: ${newBalance}`);
-    } else {
-        throw new Error(`User ${telegramId} not found in the database`);
-    }
-}
-
 // Обработчики команд бота
 bot.command('start', async (ctx) => {
   try {
@@ -225,30 +209,51 @@ app.post('/botWebhook', (req, res) => {
   });
   
   app.get('/getUserData', async (req, res) => {
-    const telegramId = req.user.telegramId;
-    const userData = await getUserData(telegramId);
-    res.json(userData);
-  });
+    const telegramId = req.query.telegramId || (req.user && req.user.telegramId);
+    if (!telegramId) {
+        return res.status(400).json({ error: 'Telegram ID не предоставлен' });
+    }
+    try {
+        const userData = await getUserData(telegramId);
+        if (userData) {
+            res.json(userData);
+        } else {
+            res.status(404).json({ error: 'Пользователь не найден' });
+        }
+    } catch (error) {
+        console.error('Ошибка при получении данных пользователя:', error);
+        res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    }
+});
+
+app.post('/createUser', async (req, res) => {
+    const { telegramId, telegramUsername } = req.body;
+    if (!telegramId || !telegramUsername) {
+        return res.status(400).json({ error: 'Не предоставлены telegramId или telegramUsername' });
+    }
+    try {
+        await createUser(telegramId, telegramUsername);
+        res.sendStatus(200);
+    } catch (error) {
+        console.error('Ошибка при создании пользователя:', error);
+        res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    }
+});
+
+app.get('/getUserReferralLink', async (req, res) => {
+    const telegramId = req.query.telegramId || (req.user && req.user.telegramId);
+    if (!telegramId) {
+        return res.status(400).json({ error: 'Telegram ID не предоставлен' });
+    }
+    try {
+        const referralLink = await getUserReferralLink(telegramId);
+        res.json({ referralLink });
+    } catch (error) {
+        console.error('Ошибка при получении реферальной ссылки:', error);
+        res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    }
+});
   
-  app.post('/createUser', async (req, res) => {
-    const { telegramUsername } = req.body;
-    const telegramId = req.user.telegramId;
-    await createUser(telegramId, telegramUsername);
-    res.sendStatus(200);
-  });
-  
-  app.get('/getUserReferralLink', async (req, res) => {
-    const telegramId = req.user.telegramId;
-    const referralLink = await getUserReferralLink(telegramId);
-    res.json({ referralLink });
-  });
-  
-  app.post('/updateTicketBalance', updateBalanceLimiter, async (req, res) => {
-    const { amount } = req.body;
-    const telegramId = req.user.telegramId;
-    await updateTicketBalance(telegramId, amount);
-    res.sendStatus(200);
-  });
 //логирование для отладки
   app.get('/', (req, res) => {
     res.status(200).send('Server is running');
