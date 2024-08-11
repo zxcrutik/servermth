@@ -25,7 +25,8 @@
     "firebase": "^9.23.0",
     "firebase-admin": "^11.5.0",
     "firebase-functions": "^5.0.1",
-    "telegraf": "^4.16.3"
+    "telegraf": "^4.16.3",
+    "tonweb": "^0.0.66"
   },
   "engines": {
     "node": "18"
