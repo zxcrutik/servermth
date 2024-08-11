@@ -5,7 +5,13 @@ const crypto = require('crypto');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
 const { Telegraf, Markup } = require('telegraf');
+const TonWeb = require('tonweb');
+const { tonweb, createWallet, generateKeyPair, IS_TESTNET, TONCENTER_API_KEY, INDEX_API_URL } = require('./common');
+const BlockSubscriptionIndex = require('./block/BlockSubscriptionIndex');
+const BN = TonWeb.utils.BN;
 
+
+const MY_HOT_WALLET_ADDRESS = 'UQA1vA2bxiZinSSAVLXObmjWiDwMlkZx7kDmHQdypYMUqquT';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -45,6 +51,136 @@ const updateBalanceLimiter = rateLimit({
   max: 500 // ограничение каждого IP до 10 запросов на обновление баланса за час
 });
 
+async function generateDepositAddress(telegramId) {
+  const keyPair = generateKeyPair();
+  const { wallet, address } = await createWallet(keyPair);
+  
+  // Сохраняем keyPair и address в базу данных, связав с telegramId
+  await database.ref('users/' + telegramId).update({
+    wallet: {
+      publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
+      secretKey: Buffer.from(keyPair.secretKey).toString('hex'),
+      address: address
+    }
+  });
+
+  return address;
+}
+
+app.get('/getDepositAddress', async (req, res) => {
+  const telegramId = req.query.telegramId;
+  const address = await generateDepositAddress(telegramId);
+  res.json({ address });
+});
+
+app.get('/checkPaymentStatus', async (req, res) => {
+  const telegramId = req.query.telegramId;
+  const userRef = database.ref('users/' + telegramId);
+  const snapshot = await userRef.once('value');
+  const userData = snapshot.val();
+  
+  if (userData && userData.pendingPayment) {
+      res.json({ status: 'pending' });
+  } else if (userData && userData.lastPayment) {
+      res.json({ status: 'completed', amount: userData.lastPayment.amount });
+  } else {
+      res.json({ status: 'no_payment' });
+  }
+});
+
+async function processDeposit(tx) {
+  const userRef = database.ref('users').orderByChild('wallet/address').equalTo(tx.account);
+  const snapshot = await userRef.once('value');
+  const userData = snapshot.val();
+
+  if (userData) {
+      const telegramId = Object.keys(userData)[0];
+      const amount = new BN(tx.in_msg.value);
+      
+      // Обновляем баланс пользователя
+      await database.ref('users/' + telegramId + '/balance').transaction(currentBalance => {
+          return (currentBalance || 0) + amount.toNumber();
+      });
+
+      // Отмечаем, что платеж получен
+      await database.ref('users/' + telegramId).update({
+          pendingPayment: null,
+          lastPayment: {
+              amount: amount.toNumber(),
+              timestamp: Date.now()
+          }
+      });
+
+      // Логика перевода средств на hot wallet
+      const balance = new BN(await tonweb.provider.getBalance(tx.account));
+
+      if (balance.gt(new BN(0))) {
+        const keyPair = {
+            publicKey: Buffer.from(userData[telegramId].wallet.publicKey, 'hex'),
+            secretKey: Buffer.from(userData[telegramId].wallet.secretKey, 'hex')
+        };
+
+        const depositWallet = createWallet(keyPair);
+        const seqno = await depositWallet.methods.seqno().call();
+
+        const transfer = await depositWallet.methods.transfer({
+            secretKey: keyPair.secretKey,
+            toAddress: MY_HOT_WALLET_ADDRESS,
+            amount: 0, // Отправляем весь баланс
+            seqno: seqno,
+            payload: `Deposit from user ${telegramId}`, // Уникальный payload для идентификации платежа
+            sendMode: 128 + 32, // mode 128 для отправки всего баланса, mode 32 для уничтожения контракта после отправки
+        });
+
+        try {
+          await transfer.send();
+          console.log(`Transfer from deposit wallet ${tx.account} to hot wallet completed`);
+          
+          // Обновляем статус в базе данных
+          await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
+              timestamp: Date.now(),
+              status: 'completed'
+          });
+      } catch (error) {
+          console.error(`Error transferring from deposit wallet to hot wallet:`, error);
+          
+          // Обновляем статус в базе данных
+          await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
+              timestamp: Date.now(),
+              status: 'failed',
+              error: error.message
+          });
+      }
+  }
+}
+}
+
+async function onTransaction(tx) {
+  if (tx.out_msgs.length > 0) return;
+
+  const userRef = database.ref('users').orderByChild('wallet/address').equalTo(tx.account);
+  const snapshot = await userRef.once('value');
+  
+  if (snapshot.exists()) {
+      const txFromNode = await tonweb.provider.getTransactions(tx.account, 1, tx.lt, tx.hash);
+      if (txFromNode.length > 0) {
+          await processDeposit(txFromNode[0]);
+      }
+  }
+}
+
+async function initBlockSubscription() {
+  const masterchainInfo = await tonweb.provider.getMasterchainInfo();
+  const lastMasterchainBlockNumber = masterchainInfo.last.seqno;
+  console.log(`Starts from ${lastMasterchainBlockNumber} masterchain block`);
+
+  const blockSubscription = new BlockSubscriptionIndex(tonweb, lastMasterchainBlockNumber, onTransaction, INDEX_API_URL, TONCENTER_API_KEY);
+  await blockSubscription.start();
+}
+
+// Запускаем мониторинг блоков
+initBlockSubscription().catch(console.error);
+
 // Функция защиты
 function verifyTelegramData(telegramData) {
     const secret = crypto.createHash('sha256')
@@ -63,15 +199,15 @@ function verifyTelegramData(telegramData) {
 
 // Роут аутентификации
 app.post('/auth', (req, res) => {
-    const telegramData = req.body;
-    if (verifyTelegramData(telegramData)) {
-        const token = crypto.randomBytes(64).toString('hex');
-        // Сохраняем токен в Firebase
-        database.ref(`users/${telegramData.id}`).set(token);
-        res.json({ token });
-    } else {
-        res.status(401).json({ error: 'Unauthorized' });
-    }
+  const telegramData = req.body;
+  if (verifyTelegramData(telegramData)) {
+      const token = crypto.randomBytes(64).toString('hex');
+      // Сохраняем токен в Firebase
+      database.ref('users/' + telegramData.id).set(token);
+      res.json({ token });
+  } else {
+      res.status(401).json({ error: 'Unauthorized' });
+  }
 });
 
 // Добавляем новые функции для работы с базой данных
