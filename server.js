@@ -59,19 +59,27 @@ const updateBalanceLimiter = rateLimit({
 });
 
 async function generateDepositAddress(telegramId) {
-  const keyPair = generateKeyPair();
-  const { wallet, address } = await createWallet(keyPair);
-  
-  // Сохраняем keyPair и address в базу данных, связав с telegramId
-  await database.ref('users/' + telegramId).update({
-    wallet: {
-      publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
-      secretKey: Buffer.from(keyPair.secretKey).toString('hex'),
-      address: address
-    }
-  });
-
-  return address;
+  console.log('Generating deposit address for Telegram ID:', telegramId);
+  try {
+    const keyPair = await createKeyPair();
+    console.log('Key pair generated');
+    const { wallet, address } = await createWallet(keyPair);
+    console.log('Wallet created, address:', address);
+    
+    // Сохраняем keyPair и address в базу данных, связав с telegramId
+    await database.ref('users/' + telegramId).update({
+      wallet: {
+        publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
+        secretKey: Buffer.from(keyPair.secretKey).toString('hex'),
+        address: address
+      }
+    });
+    console.log('Wallet info saved to database');
+    return address;
+  } catch (error) {
+    console.error('Error generating deposit address:', error);
+    throw error;
+  }
 }
 
 app.get('/getDepositAddress', async (req, res) => {
@@ -84,28 +92,21 @@ app.get('/getDepositAddress', async (req, res) => {
   }
 
   try {
-    console.log('Generating key pair');
-    const keyPair = await createKeyPair();
-    console.log('Key pair generated:', keyPair);
+    const userRef = database.ref('users/' + telegramId);
+    const snapshot = await userRef.once('value');
+    const userData = snapshot.val();
 
-    console.log('Creating wallet');
-    const { wallet, address } = await createWallet(keyPair);
-    console.log('Wallet created, address:', address);
-    
-    console.log('Saving wallet info to database');
-    await database.ref('users/' + telegramId).update({
-      wallet: {
-        publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
-        secretKey: Buffer.from(keyPair.secretKey).toString('hex'),
-        address: address
-      }
-    });
+    if (userData && userData.wallet && userData.wallet.address) {
+      console.log('Existing deposit address found:', userData.wallet.address);
+      return res.json({ address: userData.wallet.address });
+    }
 
-    console.log('Deposit address generated successfully:', address);
+    const address = await generateDepositAddress(telegramId);
+    console.log('New deposit address generated:', address);
     res.json({ address });
   } catch (error) {
-    console.error('Error generating deposit address:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message, stack: error.stack });
+    console.error('Error in /getDepositAddress:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
