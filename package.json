@@ -17,6 +17,7 @@
   "license": "ISC",
   "dependencies": {
     "18": "^0.0.0",
+    "@tonconnect/ui": "^2.0.8",
     "axios": "^1.7.3",
     "body-parser": "^1.19.0",
     "cors": "^2.8.5",
