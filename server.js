@@ -147,36 +147,40 @@ app.get('/checkPaymentStatus', async (req, res) => {
 // Эндпоинт для проверки статуса транзакции
 app.get('/checkTransactionStatus', async (req, res) => {
   const transactionBoc = req.query.transactionBoc;
+  const transactionId = req.query.transactionId;
+  const from = req.query.from;
+  const to = req.query.to;
   const telegramId = req.query.telegramId;
   const ticketAmount = parseInt(req.query.ticketAmount, 10);
   
-  if (!transactionBoc || !telegramId || isNaN(ticketAmount)) {
-    return res.status(400).json({ error: 'Transaction BOC, Telegram ID, and ticket amount are required' });
+  if (!telegramId || isNaN(ticketAmount)) {
+    return res.status(400).json({ error: 'Telegram ID and ticket amount are required' });
   }
 
   try {
-    console.log('Checking transaction status for BOC:', transactionBoc);
-    
-    // Декодируем BOC из base64
-    const bocBuffer = Buffer.from(transactionBoc, 'base64');
-    
-    // Отправляем BOC в сеть TON
-    const sendBocResult = await tonweb.provider.sendBoc(bocBuffer);
-    console.log('Send BOC result:', sendBocResult);
+    let transactionInfo;
 
-    if (!sendBocResult || !sendBocResult.hash) {
-      return res.json({ status: 'pending' });
+    if (transactionBoc) {
+      console.log('Checking transaction status for BOC:', transactionBoc);
+      const bocBuffer = Buffer.from(transactionBoc, 'base64');
+      const sendBocResult = await tonweb.provider.sendBoc(bocBuffer);
+      console.log('Send BOC result:', sendBocResult);
+
+      if (sendBocResult && sendBocResult.hash) {
+        transactionInfo = await tonweb.provider.getTransaction(sendBocResult.hash);
+      }
+    } else if (transactionId) {
+      console.log('Checking transaction status for ID:', transactionId);
+      transactionInfo = await tonweb.provider.getTransaction(transactionId);
+    } else if (from && to) {
+      console.log('Checking transaction status for addresses:', from, to);
+      const transactions = await tonweb.provider.getTransactions(from, 1);
+      transactionInfo = transactions.find(tx => tx.to === to);
     }
 
-    // Ждем некоторое время, чтобы транзакция могла быть обработана
-    await new Promise(resolve => setTimeout(resolve, 10000));
-
-    // Получаем информацию о транзакции
-    const transactionInfo = await tonweb.provider.getTransaction(sendBocResult.hash);
     console.log('Transaction info:', transactionInfo);
 
     if (transactionInfo && transactionInfo.status === 'confirmed') {
-      // Транзакция подтверждена, обновляем баланс билетов пользователя
       const newBalance = await updateTicketBalance(telegramId, ticketAmount);
       res.json({ status: 'confirmed', newBalance });
     } else {
