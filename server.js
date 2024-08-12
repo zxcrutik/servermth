@@ -91,13 +91,12 @@ async function generateDepositAddress(telegramId) {
 }
 
 async function updateTicketBalance(telegramId, ticketAmount) {
-  // Обновляем баланс билетов пользователя
   const userRef = database.ref('users/' + telegramId);
-  const newBalance = await userRef.child('ticketBalance').transaction(currentBalance => {
-    return (currentBalance || 0) + ticketAmount;
-  });
-  
-  console.log(`Updated ticket balance for user ${telegramId}: new balance is ${newBalance}`);
+  const snapshot = await userRef.once('value');
+  const userData = snapshot.val() || {};
+  const currentBalance = userData.ticketBalance || 0;
+  const newBalance = currentBalance + ticketAmount;
+  await userRef.update({ ticketBalance: newBalance });
   return newBalance;
 }
 
@@ -155,28 +154,30 @@ app.get('/checkTransactionStatus', async (req, res) => {
   }
 
   try {
+    console.log('Checking transaction status for BOC:', transactionBoc);
+    
     // Декодируем BOC из base64
     const bocBuffer = Buffer.from(transactionBoc, 'base64');
-    const transaction = await tonweb.provider.sendBoc(bocBuffer);
     
-    if (!transaction || !transaction.hash) {
+    // Отправляем BOC в сеть TON
+    const sendBocResult = await tonweb.provider.sendBoc(bocBuffer);
+    console.log('Send BOC result:', sendBocResult);
+
+    if (!sendBocResult || !sendBocResult.hash) {
       return res.json({ status: 'pending' });
     }
 
     // Ждем некоторое время, чтобы транзакция могла быть обработана
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    await new Promise(resolve => setTimeout(resolve, 10000));
 
-    const transactionInfo = await tonweb.provider.getTransactions(transaction.address, 1, transaction.lt, transaction.hash);
-    
-    if (transactionInfo && transactionInfo.length > 0) {
-      const status = transactionInfo[0].status;
-      if (status === 3) { // Предполагаем, что статус 3 означает "подтверждено"
-        // Транзакция подтверждена, обновляем баланс билетов пользователя
-        const newBalance = await updateTicketBalance(telegramId, ticketAmount);
-        res.json({ status: 'confirmed', newBalance });
-      } else {
-        res.json({ status: 'pending' });
-      }
+    // Получаем информацию о транзакции
+    const transactionInfo = await tonweb.provider.getTransaction(sendBocResult.hash);
+    console.log('Transaction info:', transactionInfo);
+
+    if (transactionInfo && transactionInfo.status === 'confirmed') {
+      // Транзакция подтверждена, обновляем баланс билетов пользователя
+      const newBalance = await updateTicketBalance(telegramId, ticketAmount);
+      res.json({ status: 'confirmed', newBalance });
     } else {
       res.json({ status: 'pending' });
     }
