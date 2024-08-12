@@ -130,13 +130,11 @@ async function checkTransactionStatus(transaction) {
 }
 
 async function updateTicketBalance(telegramId, ticketAmount) {
-  // Обновляем баланс билетов пользователя
   const userRef = database.ref('users/' + telegramId);
   const newBalance = await userRef.child('ticketBalance').transaction(currentBalance => {
     return (currentBalance || 0) + ticketAmount;
   });
-  
-  console.log(`Updated ticket balance for user ${telegramId}: new balance is ${newBalance}`);
+  console.log(`Updated ticket balance for user ${telegramId}: added ${ticketAmount} tickets`);
   return newBalance;
 }
 
@@ -185,38 +183,28 @@ app.get('/checkPaymentStatus', async (req, res) => {
 
 // Эндпоинт для проверки статуса транзакции
 app.get('/checkTransactionStatus', async (req, res) => {
-  const transactionBoc = req.query.transactionBoc;
-  const telegramId = req.query.telegramId;
-  const ticketAmount = parseInt(req.query.ticketAmount, 10);
+  const { transactionHash, telegramId, ticketAmount } = req.query;
   
-  console.log(`Received request: telegramId=${telegramId}, ticketAmount=${ticketAmount}, transactionBoc=${transactionBoc}`);
+  console.log(`Received request: telegramId=${telegramId}, ticketAmount=${ticketAmount}, transactionHash=${transactionHash}`);
   
-  if (!telegramId || isNaN(ticketAmount) || !transactionBoc) {
-    return res.status(400).json({ error: 'Telegram ID, ticket amount, and transaction BOC are required' });
+  if (!telegramId || isNaN(ticketAmount) || !transactionHash) {
+    return res.status(400).json({ error: 'Telegram ID, ticket amount, and transaction hash are required' });
   }
 
   try {
-    // Декодируем BOC
-    const cell = Cell.fromBoc(Buffer.from(transactionBoc, 'base64'))[0];
+    // Проверяем статус транзакции в блокчейне TON
+    const transactionInfo = await tonweb.provider.getTransactions(HOT_WALLET_ADDRESS, 1, undefined, transactionHash);
     
-    // Извлекаем данные из транзакции
-    const transaction = Transaction.fromCell(cell);
-    
-    console.log(`Processing transaction: from=${transaction.inMessage.source}, to=${transaction.inMessage.destination}, amount=${transaction.inMessage.value}`);
-    
-    // Проверяем, что транзакция отправлена на правильный адрес
-    if (transaction.inMessage.destination.toFriendly() !== HOT_WALLET_ADDRESS) {
-      throw new Error(`Invalid destination address: ${transaction.inMessage.destination.toFriendly()}`);
-    }
-
-    // Проверяем статус транзакции
-    const transactionStatus = await checkTransactionStatus(transaction);
-    
-    if (transactionStatus === 'confirmed') {
-      // Обновляем баланс билетов пользователя
-      const newBalance = await updateTicketBalance(telegramId, ticketAmount);
-      console.log(`Transaction processed successfully. New balance for user ${telegramId}: ${newBalance}`);
-      res.json({ status: 'confirmed', newBalance });
+    if (transactionInfo && transactionInfo.length > 0) {
+      const tx = transactionInfo[0];
+      if (tx.status === 3) { // 3 означает "финализированная" транзакция
+        // Обновляем баланс билетов пользователя
+        const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount, 10));
+        console.log(`Transaction processed successfully. New balance for user ${telegramId}: ${newBalance}`);
+        res.json({ status: 'confirmed', newBalance });
+      } else {
+        res.json({ status: 'pending' });
+      }
     } else {
       res.json({ status: 'pending' });
     }
@@ -268,6 +256,15 @@ app.post('/updateTicketBalance', async (req, res) => {
 
 async function processDeposit(tx) {
   console.log('processDeposit called with transaction:', JSON.stringify(tx, null, 2));
+
+  const minDepositAmount = TonWeb.utils.toNano('0.01'); // Минимальная сумма депозита
+  const depositAmount = new TonWeb.utils.BN(tx.in_msg.value);
+
+  if (depositAmount.lt(minDepositAmount)) {
+    console.log(`Deposit amount too small: ${TonWeb.utils.fromNano(depositAmount)} TON`);
+    return;
+  }
+
   const userRef = database.ref('users').orderByChild('wallet/address').equalTo(tx.account);
   const snapshot = await userRef.once('value');
   const userData = snapshot.val();
@@ -275,7 +272,7 @@ async function processDeposit(tx) {
   if (userData) {
     console.log('User data found:', userData);
     const telegramId = Object.keys(userData)[0];
-    const amount = new TonWeb.utils.BN(tx.in_msg.value);
+    const amount = depositAmount;
     
     // Обновляем баланс пользователя
     await database.ref('users/' + telegramId + '/balance').transaction(currentBalance => {
@@ -284,7 +281,7 @@ async function processDeposit(tx) {
 
     console.log('User balance updated');
 
-    // Логика перевода средств на hot wallet
+    // Получаем текущий баланс кошелька
     const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(tx.account));
     console.log('Current balance of temporary wallet:', balance.toString());
 
@@ -338,30 +335,49 @@ async function processDeposit(tx) {
           });
         }
       } else {
-        console.log('Amount too small to transfer after fee deduction');
+        console.log('Total amount too small to transfer after fee deduction');
       }
     } else {
-      console.log('Insufficient balance to cover fee');
+      console.log('Insufficient total balance to cover fee');
     }
   } else {
     console.log('No user data found for account:', tx.account);
   }
 }
 
+const depositAddressCache = new Set();
+
 // Добавьте эту функцию перед onTransaction
 async function isDepositAddress(address) {
+  // Проверяем кэш
+  if (depositAddressCache.has(address)) return true;
+
   const userRef = database.ref('users').orderByChild('wallet/address').equalTo(address);
   const snapshot = await userRef.once('value');
-  return snapshot.exists();
+  const isDeposit = snapshot.exists();
+
+  // Если это адрес депозита, добавляем его в кэш
+  if (isDeposit) {
+    depositAddressCache.add(address);
+  }
+
+  return isDeposit;
 }
 
 async function onTransaction(tx) {
-  console.log('onTransaction called with:', JSON.stringify(tx, null, 2));
-  
+  // Пропускаем исходящие транзакции
   if (tx.out_msgs.length > 0) {
     console.log('Skipping outgoing transaction');
     return;
   }
+
+  // Пропускаем транзакции с нулевой стоимостью
+  if (tx.in_msg.value === '0') {
+    console.log('Skipping zero-value transaction');
+    return;
+  }
+
+  console.log('Processing transaction:', JSON.stringify(tx, null, 2));
 
   if (await isDepositAddress(tx.account)) {
     console.log('Deposit address detected:', tx.account);
