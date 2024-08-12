@@ -41,5 +41,7 @@ module.exports = {
     IS_TESTNET,
     NODE_API_URL,
     INDEX_API_URL,
-    TONCENTER_API_KEY
+    TONCENTER_API_KEY,
+    tonMnemonic
+    
 };
