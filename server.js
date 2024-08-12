@@ -58,6 +58,14 @@ const updateBalanceLimiter = rateLimit({
   max: 500 // ограничение каждого IP до 10 запросов на обновление баланса за час
 });
 
+app.get('/getTonWebConfig', (req, res) => {
+  res.json({
+      IS_TESTNET,
+      NODE_API_URL,
+      INDEX_API_URL
+  });
+});
+
 async function generateDepositAddress(telegramId) {
   console.log('Generating deposit address for Telegram ID:', telegramId);
   try {
