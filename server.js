@@ -193,7 +193,7 @@ app.get('/checkTransactionStatus', async (req, res) => {
 
   try {
     // Проверяем статус транзакции в блокчейне TON
-    const transactionInfo = await tonweb.provider.getTransactions(HOT_WALLET_ADDRESS, 1, undefined, transactionHash);
+    const transactionInfo = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 1, undefined, transactionHash);
     
     if (transactionInfo && transactionInfo.length > 0) {
       const tx = transactionInfo[0];
@@ -313,7 +313,7 @@ async function processDeposit(tx) {
               console.log('Attempting to transfer funds to hot wallet');
               const transfer = await depositWallet.methods.transfer({
                 secretKey: keyPair.secretKey,
-                toAddress: HOT_WALLET_ADDRESS,
+                toAddress: MY_HOT_WALLET_ADDRESS,
                 amount: amountToTransfer,
                 seqno: seqno,
                 payload: `Deposit from user ${telegramId}`,
@@ -368,43 +368,44 @@ async function processDeposit(tx) {
 
 const depositAddressCache = new Set();
 
-// Добавьте эту функцию перед onTransaction
 async function isDepositAddress(address) {
   // Проверяем кэш
   if (depositAddressCache.has(address)) return true;
-
+  
   const userRef = database.ref('users').orderByChild('wallet/address').equalTo(address);
   const snapshot = await userRef.once('value');
   const isDeposit = snapshot.exists();
-
+  
   // Если это адрес депозита, добавляем его в кэш
   if (isDeposit) {
     depositAddressCache.add(address);
   }
-
+  
   return isDeposit;
 }
 
 async function onTransaction(tx) {
   // Пропускаем исходящие транзакции
   if (tx.out_msgs.length > 0) {
-    console.log('Skipping outgoing transaction');
-    return;
+    return; // Убираем лог для пропуска исходящих транзакций
   }
 
   // Проверяем, что tx.in_msg существует и имеет свойство value
   if (!tx.in_msg || tx.in_msg.value === undefined) {
-    console.log('Invalid transaction structure:', tx);
-    return;
+    return; // Убираем лог для недействительных структур транзакций
   }
 
   // Пропускаем транзакции с нулевой стоимостью
   if (tx.in_msg.value === '0') {
-    console.log('Skipping zero-value transaction');
-    return;
+    return; // Убираем лог для транзакций с нулевой стоимостью
   }
 
-  console.log('Processing transaction:', JSON.stringify(tx, null, 2));
+  // Логируем только важные транзакции
+  console.log('Processing important transaction:', JSON.stringify({
+    account: tx.account,
+    lt: tx.lt,
+    value: tx.in_msg.value
+  }, null, 2));
 
   try {
     if (await isDepositAddress(tx.account)) {
@@ -416,9 +417,8 @@ async function onTransaction(tx) {
       } else {
         console.log('No transactions found from node');
       }
-    } else {
-      console.log('Not a deposit address:', tx.account);
     }
+    // Убираем лог для не депозитных адресов
   } catch (error) {
     console.error('Error processing transaction:', error);
   }
