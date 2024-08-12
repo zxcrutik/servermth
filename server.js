@@ -91,12 +91,13 @@ async function generateDepositAddress(telegramId) {
 }
 
 async function updateTicketBalance(telegramId, ticketAmount) {
+  // Обновляем баланс билетов пользователя
   const userRef = database.ref('users/' + telegramId);
-  const snapshot = await userRef.once('value');
-  const userData = snapshot.val() || {};
-  const currentBalance = userData.ticketBalance || 0;
-  const newBalance = currentBalance + ticketAmount;
-  await userRef.update({ ticketBalance: newBalance });
+  const newBalance = await userRef.child('ticketBalance').transaction(currentBalance => {
+    return (currentBalance || 0) + ticketAmount;
+  });
+  
+  console.log(`Updated ticket balance for user ${telegramId}: new balance is ${newBalance}`);
   return newBalance;
 }
 
