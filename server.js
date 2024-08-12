@@ -90,6 +90,17 @@ async function generateDepositAddress(telegramId) {
   }
 }
 
+async function updateTicketBalance(telegramId, ticketAmount) {
+  // Обновляем баланс билетов пользователя
+  const userRef = database.ref('users/' + telegramId);
+  const newBalance = await userRef.child('ticketBalance').transaction(currentBalance => {
+    return (currentBalance || 0) + ticketAmount;
+  });
+  
+  console.log(`Updated ticket balance for user ${telegramId}: new balance is ${newBalance}`);
+  return newBalance;
+}
+
 app.get('/getDepositAddress', async (req, res) => {
   const telegramId = req.query.telegramId;
   console.log('Received request for deposit address. Telegram ID:', telegramId);
@@ -135,23 +146,40 @@ app.get('/checkPaymentStatus', async (req, res) => {
 
 // Эндпоинт для проверки статуса транзакции
 app.get('/checkTransactionStatus', async (req, res) => {
-  const transactionId = req.query.transactionId;
-  if (!transactionId) {
-    return res.status(400).json({ error: 'Transaction ID is required' });
+  const transactionBoc = req.query.transactionBoc;
+  const telegramId = req.query.telegramId;
+  const ticketAmount = parseInt(req.query.ticketAmount, 10);
+  
+  if (!transactionBoc || !telegramId || isNaN(ticketAmount)) {
+    return res.status(400).json({ error: 'Transaction BOC, Telegram ID, and ticket amount are required' });
   }
 
   try {
-    const transactionInfo = await tonweb.provider.getTransactions(transactionId);
+    const transaction = await tonweb.provider.sendBoc(transactionBoc);
+    if (!transaction || !transaction.hash) {
+      return res.json({ status: 'pending' });
+    }
+
+    // Ждем некоторое время, чтобы транзакция могла быть обработана
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    const transactionInfo = await tonweb.provider.getTransactions(transaction.address, 1, transaction.lt, transaction.hash);
     
     if (transactionInfo && transactionInfo.length > 0) {
       const status = transactionInfo[0].status; // Предполагаем, что статус доступен в ответе
-      res.json({ status: status === 3 ? 'confirmed' : 'pending' });
+      if (status === 3) {
+        // Транзакция подтверждена, обновляем баланс билетов пользователя
+        const newBalance = await updateTicketBalance(telegramId, ticketAmount);
+        res.json({ status: 'confirmed', newBalance });
+      } else {
+        res.json({ status: 'pending' });
+      }
     } else {
       res.json({ status: 'pending' });
     }
   } catch (error) {
     console.error('Error checking transaction status:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
