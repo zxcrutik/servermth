@@ -155,7 +155,10 @@ app.get('/checkTransactionStatus', async (req, res) => {
   }
 
   try {
-    const transaction = await tonweb.provider.sendBoc(transactionBoc);
+    // Декодируем BOC из base64
+    const bocBuffer = Buffer.from(transactionBoc, 'base64');
+    const transaction = await tonweb.provider.sendBoc(bocBuffer);
+    
     if (!transaction || !transaction.hash) {
       return res.json({ status: 'pending' });
     }
@@ -166,8 +169,8 @@ app.get('/checkTransactionStatus', async (req, res) => {
     const transactionInfo = await tonweb.provider.getTransactions(transaction.address, 1, transaction.lt, transaction.hash);
     
     if (transactionInfo && transactionInfo.length > 0) {
-      const status = transactionInfo[0].status; // Предполагаем, что статус доступен в ответе
-      if (status === 3) {
+      const status = transactionInfo[0].status;
+      if (status === 3) { // Предполагаем, что статус 3 означает "подтверждено"
         // Транзакция подтверждена, обновляем баланс билетов пользователя
         const newBalance = await updateTicketBalance(telegramId, ticketAmount);
         res.json({ status: 'confirmed', newBalance });
