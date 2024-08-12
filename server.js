@@ -91,33 +91,28 @@ async function generateDepositAddress(telegramId) {
   }
 }
 
-async function checkTransactionStatus(transaction) {
+async function checkTransactionStatus(transactionHash) {
   try {
-    // Получаем хэш транзакции
-    const transactionHash = transaction.hash().toString('hex');
-    
+    console.log(`Checking status for transaction: ${transactionHash}`);
+
     // Получаем информацию о транзакции из сети TON
-    const transactionInfo = await tonweb.provider.getTransactions(transaction.inMessage.source, 1, transactionHash);
+    const transactionInfo = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 1, undefined, transactionHash);
     
     if (transactionInfo && transactionInfo.length > 0) {
       const tx = transactionInfo[0];
       
-      // Проверяем, что транзакция соответствует ожидаемой
-      if (tx.in_msg.source === transaction.inMessage.source.toFriendly() &&
-          tx.in_msg.destination === transaction.inMessage.destination.toFriendly() &&
-          tx.in_msg.value === transaction.inMessage.value.toString()) {
-        
-        // Проверяем статус транзакции
-        if (tx.status === 3) { // 3 означает "финализированная" транзакция
-          console.log(`Transaction ${transactionHash} is confirmed`);
-          return 'confirmed';
-        } else {
-          console.log(`Transaction ${transactionHash} is still pending`);
-          return 'pending';
-        }
-      } else {
-        console.log(`Transaction ${transactionHash} does not match expected details`);
+      console.log(`Transaction details:`, JSON.stringify(tx, null, 2));
+
+      // Проверяем статус транзакции
+      if (tx.status === 3) { // 3 означает "финализированная" транзакция
+        console.log(`Transaction ${transactionHash} is confirmed`);
+        return 'confirmed';
+      } else if (tx.status === 0) { // 0 означает "в процессе"
+        console.log(`Transaction ${transactionHash} is still pending`);
         return 'pending';
+      } else {
+        console.log(`Transaction ${transactionHash} has unknown status: ${tx.status}`);
+        return 'unknown';
       }
     } else {
       console.log(`Transaction ${transactionHash} not found`);
@@ -125,7 +120,7 @@ async function checkTransactionStatus(transaction) {
     }
   } catch (error) {
     console.error(`Error checking transaction status: ${error.message}`);
-    return 'pending';
+    return 'failed';
   }
 }
 
@@ -166,21 +161,6 @@ app.get('/getDepositAddress', async (req, res) => {
   }
 });
 
-app.get('/checkPaymentStatus', async (req, res) => {
-  const telegramId = req.query.telegramId;
-  const userRef = database.ref('users/' + telegramId);
-  const snapshot = await userRef.once('value');
-  const userData = snapshot.val();
-  
-  if (userData && userData.pendingPayment) {
-      res.json({ status: 'pending' });
-  } else if (userData && userData.lastPayment) {
-      res.json({ status: 'completed', amount: userData.lastPayment.amount });
-  } else {
-      res.json({ status: 'no_payment' });
-  }
-});
-
 // Эндпоинт для проверки статуса транзакции
 app.get('/checkTransactionStatus', async (req, res) => {
   const { transactionHash, telegramId, ticketAmount } = req.query;
@@ -192,21 +172,34 @@ app.get('/checkTransactionStatus', async (req, res) => {
   }
 
   try {
-    // Проверяем статус транзакции в блокчейне TON
-    const transactionInfo = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 1, undefined, transactionHash);
+    let hash = transactionHash;
+    if (transactionHash.startsWith('te6cck')) {
+      // Если получили BOC вместо хеша, отправляем BOC и получаем хеш
+      console.log('Received BOC instead of hash, sending BOC to get hash');
+      const boc = TonWeb.utils.base64ToBytes(transactionHash);
+      const result = await tonweb.provider.sendBoc(boc);
+      hash = result.hash;
+      console.log('Obtained hash from BOC:', hash);
+    }
+
+    const status = await checkTransactionStatus(hash);
     
-    if (transactionInfo && transactionInfo.length > 0) {
-      const tx = transactionInfo[0];
-      if (tx.status === 3) { // 3 означает "финализированная" транзакция
-        // Обновляем баланс билетов пользователя
-        const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount, 10));
-        console.log(`Transaction processed successfully. New balance for user ${telegramId}: ${newBalance}`);
-        res.json({ status: 'confirmed', newBalance });
-      } else {
-        res.json({ status: 'pending' });
-      }
-    } else {
+    console.log(`Transaction status for ${hash}: ${status}`);
+
+    if (status === 'confirmed') {
+      // Обновляем баланс билетов пользователя
+      const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount, 10));
+      console.log(`Transaction processed successfully. New balance for user ${telegramId}: ${newBalance}`);
+      res.json({ status, newBalance });
+    } else if (status === 'pending') {
+      console.log(`Transaction ${hash} is still pending`);
       res.json({ status: 'pending' });
+    } else if (status === 'unknown') {
+      console.log(`Transaction ${hash} has unknown status`);
+      res.json({ status: 'unknown' });
+    } else {
+      console.log(`Transaction ${hash} not found or failed`);
+      res.json({ status: 'failed' });
     }
   } catch (error) {
     console.error('Error in check_transaction_status:', error);
@@ -387,38 +380,26 @@ async function isDepositAddress(address) {
 async function onTransaction(tx) {
   // Пропускаем исходящие транзакции
   if (tx.out_msgs.length > 0) {
-    return; // Убираем лог для пропуска исходящих транзакций
+    return;
   }
 
   // Проверяем, что tx.in_msg существует и имеет свойство value
   if (!tx.in_msg || tx.in_msg.value === undefined) {
-    return; // Убираем лог для недействительных структур транзакций
+    return;
   }
 
   // Пропускаем транзакции с нулевой стоимостью
   if (tx.in_msg.value === '0') {
-    return; // Убираем лог для транзакций с нулевой стоимостью
+    return;
   }
-
-  // Логируем только важные транзакции
-  console.log('Processing important transaction:', JSON.stringify({
-    account: tx.account,
-    lt: tx.lt,
-    value: tx.in_msg.value
-  }, null, 2));
 
   try {
     if (await isDepositAddress(tx.account)) {
-      console.log('Deposit address detected:', tx.account);
       const txFromNode = await tonweb.provider.getTransactions(tx.account, 1, tx.lt, tx.hash);
       if (txFromNode.length > 0) {
-        console.log('Calling processDeposit');
         await processDeposit(txFromNode[0]);
-      } else {
-        console.log('No transactions found from node');
       }
     }
-    // Убираем лог для не депозитных адресов
   } catch (error) {
     console.error('Error processing transaction:', error);
   }

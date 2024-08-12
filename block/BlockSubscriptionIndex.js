@@ -16,12 +16,11 @@ class BlockSubscriptionIndex {
         if (snapshot.exists()) {
             this.lastProcessedMasterchainBlockNumber = snapshot.val();
         }
-        console.log(`Loaded last processed block: ${this.lastProcessedMasterchainBlockNumber}`);
+        
     }
 
     async saveLastProcessedBlock() {
         await this.database.ref('lastProcessedBlock').set(this.lastProcessedMasterchainBlockNumber);
-        console.log(`Saved last processed block: ${this.lastProcessedMasterchainBlockNumber}`);
     }
 
     async start() {
@@ -41,7 +40,7 @@ class BlockSubscriptionIndex {
                 }
                 return response.data;
             } catch (error) {
-                console.error(`Error fetching transactions for block ${masterchainBlockNumber}:`, error.message);
+            
                 throw error;
             }
         };
