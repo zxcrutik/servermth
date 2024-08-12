@@ -34,11 +34,16 @@ class BlockSubscriptionIndex {
                 'X-API-Key': this.apiKey
             };
             const url = `${this.indexApiUrl}getTransactionsByMasterchainSeqno?seqno=${masterchainBlockNumber}`;
-            const response = await axios.get(url, { headers });
-            if (response.data.error) {
-                throw new Error(response.data.error);
+            try {
+                const response = await axios.get(url, { headers });
+                if (response.data.error) {
+                    throw new Error(`API Error: ${response.data.error}`);
+                }
+                return response.data;
+            } catch (error) {
+                console.error(`Error fetching transactions for block ${masterchainBlockNumber}:`, error.message);
+                throw error;
             }
-            return response.data;
         };
 
         let isProcessing = false;
@@ -46,29 +51,39 @@ class BlockSubscriptionIndex {
         const tick = async () => {
             if (isProcessing) return;
             isProcessing = true;
-
+        
             try {
                 const masterchainInfo = await this.tonweb.provider.getMasterchainInfo();
                 const lastMasterchainBlockNumber = masterchainInfo.last.seqno;
-
+        
                 if (lastMasterchainBlockNumber > this.lastProcessedMasterchainBlockNumber) {
                     const masterchainBlockNumber = this.lastProcessedMasterchainBlockNumber + 1;
                     const transactions = await getTransactionsByMasterchainSeqno(masterchainBlockNumber);
-
+        
                     console.log(`Got masterchain block ${masterchainBlockNumber} and related shard blocks`);
-
+        
                     for (const tx of transactions) {
-                        await this.onTransaction(tx);
+                        try {
+                            await this.onTransaction(tx);
+                        } catch (txError) {
+                            console.error(`Error processing transaction in block ${masterchainBlockNumber}:`, txError);
+                            // Можно добавить логику для сохранения информации о неудачной обработке транзакции
+                        }
                     }
-
+        
                     this.lastProcessedMasterchainBlockNumber = masterchainBlockNumber;
                     await this.saveLastProcessedBlock();
                 }
             } catch (e) {
                 console.error('Error in BlockSubscriptionIndex:', e);
+                if (e.response) {
+                    console.error('Response data:', e.response.data);
+                    console.error('Response status:', e.response.status);
+                }
+                // Можно добавить логику для повторной попытки или уведомления администратора
+            } finally {
+                isProcessing = false;
             }
-
-            isProcessing = false;
         };
 
         setInterval(tick, 1000);

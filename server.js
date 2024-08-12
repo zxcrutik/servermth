@@ -257,6 +257,11 @@ app.post('/updateTicketBalance', async (req, res) => {
 async function processDeposit(tx) {
   console.log('processDeposit called with transaction:', JSON.stringify(tx, null, 2));
 
+  if (!tx || !tx.in_msg || !tx.in_msg.value) {
+    console.log('Invalid transaction structure in processDeposit');
+    return;
+  }
+
   const minDepositAmount = TonWeb.utils.toNano('0.01'); // Минимальная сумма депозита
   const depositAmount = new TonWeb.utils.BN(tx.in_msg.value);
 
@@ -265,83 +270,99 @@ async function processDeposit(tx) {
     return;
   }
 
-  const userRef = database.ref('users').orderByChild('wallet/address').equalTo(tx.account);
-  const snapshot = await userRef.once('value');
-  const userData = snapshot.val();
+  try {
+    const userRef = database.ref('users').orderByChild('wallet/address').equalTo(tx.account);
+    const snapshot = await userRef.once('value');
+    const userData = snapshot.val();
 
-  if (userData) {
-    console.log('User data found:', userData);
-    const telegramId = Object.keys(userData)[0];
-    const amount = depositAmount;
-    
-    // Обновляем баланс пользователя
-    await database.ref('users/' + telegramId + '/balance').transaction(currentBalance => {
-      return (currentBalance || 0) + amount.toNumber();
-    });
+    if (userData) {
+      console.log('User data found:', userData);
+      const telegramId = Object.keys(userData)[0];
+      const amount = depositAmount;
+      
+      // Обновляем баланс пользователя
+      await database.ref('users/' + telegramId + '/balance').transaction(currentBalance => {
+        return (currentBalance || 0) + amount.toNumber();
+      });
 
-    console.log('User balance updated');
+      console.log('User balance updated');
 
-    // Получаем текущий баланс кошелька
-    const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(tx.account));
-    console.log('Current balance of temporary wallet:', balance.toString());
+      try {
+        // Получаем текущий баланс кошелька
+        const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(tx.account));
+        console.log('Current balance of temporary wallet:', balance.toString());
 
-    const minTransferAmount = TonWeb.utils.toNano('0.001'); // Минимальная сумма для перевода
-    const feeReserve = TonWeb.utils.toNano('0.01'); // Резерв для комиссии
+        const minTransferAmount = TonWeb.utils.toNano('0.001'); // Минимальная сумма для перевода
+        const feeReserve = TonWeb.utils.toNano('0.01'); // Резерв для комиссии
 
-    if (balance.gt(feeReserve)) {
-      const amountToTransfer = balance.sub(feeReserve);
-      if (amountToTransfer.gte(minTransferAmount)) {
-        const keyPair = {
-          publicKey: Buffer.from(userData[telegramId].wallet.publicKey, 'hex'),
-          secretKey: Buffer.from(userData[telegramId].wallet.secretKey, 'hex')
-        };
+        if (balance.gt(feeReserve)) {
+          const amountToTransfer = balance.sub(feeReserve);
+          if (amountToTransfer.gte(minTransferAmount)) {
+            if (userData[telegramId] && userData[telegramId].wallet) {
+              const keyPair = {
+                publicKey: Buffer.from(userData[telegramId].wallet.publicKey, 'hex'),
+                secretKey: Buffer.from(userData[telegramId].wallet.secretKey, 'hex')
+              };
 
-        console.log('Using public key:', keyPair.publicKey.toString('hex'));
-        console.log('Secret key length:', keyPair.secretKey.length);
+              console.log('Using public key:', keyPair.publicKey.toString('hex'));
+              console.log('Secret key length:', keyPair.secretKey.length);
 
-        const depositWallet = await tonweb.wallet.load({publicKey: keyPair.publicKey});
-        const seqno = await depositWallet.methods.seqno().call();
+              const depositWallet = await tonweb.wallet.load({publicKey: keyPair.publicKey});
+              const seqno = await depositWallet.methods.seqno().call();
 
-        console.log('Attempting to transfer funds to hot wallet');
-        const transfer = await depositWallet.methods.transfer({
-          secretKey: keyPair.secretKey,
-          toAddress: HOT_WALLET_ADDRESS,
-          amount: amountToTransfer,
-          seqno: seqno,
-          payload: `Deposit from user ${telegramId}`,
-          sendMode: 3,
-        });
+              console.log('Attempting to transfer funds to hot wallet');
+              const transfer = await depositWallet.methods.transfer({
+                secretKey: keyPair.secretKey,
+                toAddress: HOT_WALLET_ADDRESS,
+                amount: amountToTransfer,
+                seqno: seqno,
+                payload: `Deposit from user ${telegramId}`,
+                sendMode: 3,
+              });
 
-        try {
-          const transferResult = await transfer.send();
-          console.log('Transfer result:', transferResult);
-          
-          // Обновляем статус в базе данных
-          await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
-            timestamp: Date.now(),
-            status: 'completed',
-            result: transferResult,
-            amount: amountToTransfer.toString()
-          });
-        } catch (error) {
-          console.error('Error transferring from deposit wallet to hot wallet:', error);
-          console.error('Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-          
-          // Обновляем статус в базе данных
-          await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
-            timestamp: Date.now(),
-            status: 'failed',
-            error: error.message
-          });
+              try {
+                const transferPromise = transfer.send();
+                const transferResult = await Promise.race([
+                  transferPromise,
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('Transfer timeout')), 30000))
+                ]);
+                console.log('Transfer result:', transferResult);
+                
+                // Обновляем статус в базе данных
+                await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
+                  timestamp: Date.now(),
+                  status: 'completed',
+                  result: transferResult,
+                  amount: amountToTransfer.toString()
+                });
+              } catch (error) {
+                console.error('Error transferring from deposit wallet to hot wallet:', error);
+                console.error('Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+                
+                // Обновляем статус в базе данных
+                await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
+                  timestamp: Date.now(),
+                  status: 'failed',
+                  error: error.message
+                });
+              }
+            } else {
+              console.error('Invalid user data structure for telegramId:', telegramId);
+            }
+          } else {
+            console.log('Total amount too small to transfer after fee deduction');
+          }
+        } else {
+          console.log('Insufficient total balance to cover fee');
         }
-      } else {
-        console.log('Total amount too small to transfer after fee deduction');
+      } catch (balanceError) {
+        console.error('Error getting wallet balance:', balanceError);
       }
     } else {
-      console.log('Insufficient total balance to cover fee');
+      console.log('No user data found for account:', tx.account);
     }
-  } else {
-    console.log('No user data found for account:', tx.account);
+  } catch (dbError) {
+    console.error('Error accessing database:', dbError);
   }
 }
 
@@ -371,6 +392,12 @@ async function onTransaction(tx) {
     return;
   }
 
+  // Проверяем, что tx.in_msg существует и имеет свойство value
+  if (!tx.in_msg || tx.in_msg.value === undefined) {
+    console.log('Invalid transaction structure:', tx);
+    return;
+  }
+
   // Пропускаем транзакции с нулевой стоимостью
   if (tx.in_msg.value === '0') {
     console.log('Skipping zero-value transaction');
@@ -379,20 +406,23 @@ async function onTransaction(tx) {
 
   console.log('Processing transaction:', JSON.stringify(tx, null, 2));
 
-  if (await isDepositAddress(tx.account)) {
-    console.log('Deposit address detected:', tx.account);
-    const txFromNode = await tonweb.provider.getTransactions(tx.account, 1, tx.lt, tx.hash);
-    if (txFromNode.length > 0) {
-      console.log('Calling processDeposit');
-      await processDeposit(txFromNode[0]);
+  try {
+    if (await isDepositAddress(tx.account)) {
+      console.log('Deposit address detected:', tx.account);
+      const txFromNode = await tonweb.provider.getTransactions(tx.account, 1, tx.lt, tx.hash);
+      if (txFromNode.length > 0) {
+        console.log('Calling processDeposit');
+        await processDeposit(txFromNode[0]);
+      } else {
+        console.log('No transactions found from node');
+      }
     } else {
-      console.log('No transactions found from node');
+      console.log('Not a deposit address:', tx.account);
     }
-  } else {
-    console.log('Not a deposit address:', tx.account);
+  } catch (error) {
+    console.error('Error processing transaction:', error);
   }
 }
-
 // Добавьте эту функцию в конец файла
 async function initBlockSubscription() {
   const masterchainInfo = await tonweb.provider.getMasterchainInfo();
