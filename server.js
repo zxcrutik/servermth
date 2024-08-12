@@ -252,6 +252,13 @@ async function processDeposit(tx) {
   }
 }
 
+// Добавьте эту функцию перед onTransaction
+async function isDepositAddress(address) {
+  const userRef = database.ref('users').orderByChild('wallet/address').equalTo(address);
+  const snapshot = await userRef.once('value');
+  return snapshot.exists();
+}
+
 // Обновите существующую функцию onTransaction
 async function onTransaction(tx) {
   if (tx.out_msgs.length > 0) return;
