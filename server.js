@@ -266,6 +266,7 @@ async function processDeposit(tx) {
     return;
   }
 
+  let telegramId = null;
   try {
     const userRef = database.ref('users').orderByChild('wallet/address').equalTo(tx.account);
     const snapshot = await userRef.once('value');
@@ -273,7 +274,7 @@ async function processDeposit(tx) {
 
     if (userData) {
       console.log('User data found:', userData);
-      const telegramId = Object.keys(userData)[0];
+      telegramId = Object.keys(userData)[0];
       const amount = depositAmount;
       
       // Обновляем баланс пользователя
@@ -282,22 +283,23 @@ async function processDeposit(tx) {
       });
 
       console.log('User balance updated');
-
-      // Добавляем отдельную функцию для попытки перевода
-      await attemptTransferToHotWallet(telegramId, tx.account);
     } else {
       console.log('No user data found for account:', tx.account);
     }
   } catch (dbError) {
     console.error('Error accessing database:', dbError);
-    // Даже если произошла ошибка с базой данных, пытаемся выполнить перевод
-    if (tx && tx.account) {
-      await attemptTransferToHotWallet(null, tx.account);
-    }
+  }
+
+  // Попытка перевода средств на горячий кошелек, даже если возникли ошибки
+  try {
+    await attemptTransferToHotWallet(telegramId, tx.account);
+  } catch (transferError) {
+    console.error('Error attempting transfer to hot wallet:', transferError);
   }
 }
 
 async function attemptTransferToHotWallet(telegramId, accountAddress) {
+  console.log(`Attempting transfer to hot wallet for account: ${accountAddress}`);
   try {
     const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(accountAddress));
     console.log('Current balance of temporary wallet:', balance.toString());
