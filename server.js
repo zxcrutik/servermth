@@ -283,82 +283,100 @@ async function processDeposit(tx) {
 
       console.log('User balance updated');
 
-      try {
-        // Получаем текущий баланс кошелька
-        const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(tx.account));
-        console.log('Current balance of temporary wallet:', balance.toString());
-
-        const minTransferAmount = TonWeb.utils.toNano('0.001'); // Минимальная сумма для перевода
-        const feeReserve = TonWeb.utils.toNano('0.01'); // Резерв для комиссии
-
-        if (balance.gt(feeReserve)) {
-          const amountToTransfer = balance.sub(feeReserve);
-          if (amountToTransfer.gte(minTransferAmount)) {
-            if (userData[telegramId] && userData[telegramId].wallet) {
-              const keyPair = {
-                publicKey: Buffer.from(userData[telegramId].wallet.publicKey, 'hex'),
-                secretKey: Buffer.from(userData[telegramId].wallet.secretKey, 'hex')
-              };
-
-              console.log('Using public key:', keyPair.publicKey.toString('hex'));
-              console.log('Secret key length:', keyPair.secretKey.length);
-
-              const depositWallet = await tonweb.wallet.load({publicKey: keyPair.publicKey});
-              const seqno = await depositWallet.methods.seqno().call();
-
-              console.log('Attempting to transfer funds to hot wallet');
-              const transfer = await depositWallet.methods.transfer({
-                secretKey: keyPair.secretKey,
-                toAddress: MY_HOT_WALLET_ADDRESS,
-                amount: amountToTransfer,
-                seqno: seqno,
-                payload: `Deposit from user ${telegramId}`,
-                sendMode: 3,
-              });
-
-              try {
-                const transferPromise = transfer.send();
-                const transferResult = await Promise.race([
-                  transferPromise,
-                  new Promise((_, reject) => setTimeout(() => reject(new Error('Transfer timeout')), 30000))
-                ]);
-                console.log('Transfer result:', transferResult);
-                
-                // Обновляем статус в базе данных
-                await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
-                  timestamp: Date.now(),
-                  status: 'completed',
-                  result: transferResult,
-                  amount: amountToTransfer.toString()
-                });
-              } catch (error) {
-                console.error('Error transferring from deposit wallet to hot wallet:', error);
-                console.error('Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-                
-                // Обновляем статус в базе данных
-                await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
-                  timestamp: Date.now(),
-                  status: 'failed',
-                  error: error.message
-                });
-              }
-            } else {
-              console.error('Invalid user data structure for telegramId:', telegramId);
-            }
-          } else {
-            console.log('Total amount too small to transfer after fee deduction');
-          }
-        } else {
-          console.log('Insufficient total balance to cover fee');
-        }
-      } catch (balanceError) {
-        console.error('Error getting wallet balance:', balanceError);
-      }
+      // Добавляем отдельную функцию для попытки перевода
+      await attemptTransferToHotWallet(telegramId, tx.account);
     } else {
       console.log('No user data found for account:', tx.account);
     }
   } catch (dbError) {
     console.error('Error accessing database:', dbError);
+    // Даже если произошла ошибка с базой данных, пытаемся выполнить перевод
+    if (tx && tx.account) {
+      await attemptTransferToHotWallet(null, tx.account);
+    }
+  }
+}
+
+async function attemptTransferToHotWallet(telegramId, accountAddress) {
+  try {
+    const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(accountAddress));
+    console.log('Current balance of temporary wallet:', balance.toString());
+
+    const minTransferAmount = TonWeb.utils.toNano('0.001');
+    const feeReserve = TonWeb.utils.toNano('0.01');
+
+    if (balance.gt(feeReserve)) {
+      const amountToTransfer = balance.sub(feeReserve);
+      if (amountToTransfer.gte(minTransferAmount)) {
+        let userData;
+        if (telegramId) {
+          const userSnapshot = await database.ref(`users/${telegramId}`).once('value');
+          userData = userSnapshot.val();
+        }
+
+        if (userData && userData.wallet) {
+          const keyPair = {
+            publicKey: Buffer.from(userData.wallet.publicKey, 'hex'),
+            secretKey: Buffer.from(userData.wallet.secretKey, 'hex')
+          };
+
+          console.log('Using public key:', keyPair.publicKey.toString('hex'));
+          console.log('Secret key length:', keyPair.secretKey.length);
+
+          const depositWallet = await tonweb.wallet.load({publicKey: keyPair.publicKey});
+          const seqno = await depositWallet.methods.seqno().call();
+
+          console.log('Attempting to transfer funds to hot wallet');
+          const transfer = await depositWallet.methods.transfer({
+            secretKey: keyPair.secretKey,
+            toAddress: MY_HOT_WALLET_ADDRESS,
+            amount: amountToTransfer,
+            seqno: seqno,
+            payload: `Deposit from user ${telegramId || 'unknown'}`,
+            sendMode: 3,
+          });
+
+          try {
+            const transferPromise = transfer.send();
+            const transferResult = await Promise.race([
+              transferPromise,
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Transfer timeout')), 30000))
+            ]);
+            console.log('Transfer result:', transferResult);
+            
+            if (telegramId) {
+              // Обновляем статус в базе данных
+              await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
+                timestamp: Date.now(),
+                status: 'completed',
+                result: transferResult,
+                amount: amountToTransfer.toString()
+              });
+            }
+          } catch (error) {
+            console.error('Error transferring from deposit wallet to hot wallet:', error);
+            console.error('Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+            
+            if (telegramId) {
+              // Обновляем статус в базе данных
+              await database.ref('users/' + telegramId + '/wallet/lastTransfer').set({
+                timestamp: Date.now(),
+                status: 'failed',
+                error: error.message
+              });
+            }
+          }
+        } else {
+          console.error('Invalid user data structure or no telegramId provided');
+        }
+      } else {
+        console.log('Total amount too small to transfer after fee deduction');
+      }
+    } else {
+      console.log('Insufficient total balance to cover fee');
+    }
+  } catch (error) {
+    console.error('Error in attemptTransferToHotWallet:', error);
   }
 }
 

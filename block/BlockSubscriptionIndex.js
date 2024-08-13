@@ -59,7 +59,7 @@ class BlockSubscriptionIndex {
                     const masterchainBlockNumber = this.lastProcessedMasterchainBlockNumber + 1;
                     const transactions = await getTransactionsByMasterchainSeqno(masterchainBlockNumber);
         
-                    console.log(`Got masterchain block ${masterchainBlockNumber} and related shard blocks`);
+                    
         
                     for (const tx of transactions) {
                         try {
