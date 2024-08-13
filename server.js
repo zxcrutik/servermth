@@ -325,10 +325,10 @@ async function processDeposit(tx) {
   }
 }
 
-async function attemptTransferToHotWallet(telegramId, accountAddress) {
-  console.log(`Attempting transfer to hot wallet for account: ${accountAddress}`);
+async function attemptTransferToHotWallet(telegramId, address) {
+  console.log(`Attempting transfer to hot wallet for account: ${address}`);
   try {
-    const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(accountAddress));
+    const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(address));
     console.log('Current balance of temporary wallet:', balance.toString());
 
     const minTransferAmount = TonWeb.utils.toNano('0.001');
@@ -357,7 +357,7 @@ async function attemptTransferToHotWallet(telegramId, accountAddress) {
       keyPair = await tonweb.utils.keyPair();
     }
 
-    const wallet = await tonweb.wallet.load({publicKey: keyPair.publicKey});
+    const { wallet } = await createWallet(keyPair);
     let seqno;
     try {
       seqno = await wallet.methods.seqno().call();
@@ -372,7 +372,7 @@ async function attemptTransferToHotWallet(telegramId, accountAddress) {
       toAddress: MY_HOT_WALLET_ADDRESS,
       amount: amountToTransfer,
       seqno: seqno,
-      payload: `Transfer from temporary wallet ${accountAddress}`,
+      payload: `Transfer from temporary wallet ${address}`,
       sendMode: 3,
     });
 
@@ -397,11 +397,11 @@ async function attemptTransferToHotWallet(telegramId, accountAddress) {
           error: transferError.message
         });
       }
-      throw transferError; // Перебрасываем ошибку, чтобы она была обработана в processDeposit
+      throw transferError;
     }
   } catch (error) {
     console.error('Error in attemptTransferToHotWallet:', error);
-    throw error; // Перебрасываем ошибку, чтобы она была обработана в processDeposit
+    throw error;
   }
 }
 
