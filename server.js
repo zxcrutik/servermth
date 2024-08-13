@@ -479,6 +479,22 @@ function verifyTelegramData(telegramData) {
     return hmac === telegramData.hash;
 }
 
+app.post('/attemptTransferToHotWallet', async (req, res) => {
+  const { telegramId, address } = req.body;
+  
+  if (!telegramId || !address) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+  }
+
+  try {
+      await attemptTransferToHotWallet(telegramId, address);
+      res.json({ success: true, message: 'Transfer to hot wallet initiated' });
+  } catch (error) {
+      console.error('Error in /attemptTransferToHotWallet:', error);
+      res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
 // Роут аутентификации
 app.post('/auth', (req, res) => {
   const telegramData = req.body;
