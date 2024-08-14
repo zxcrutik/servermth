@@ -13,7 +13,7 @@ const { Cell, Transaction } = TonWeb.boc;
    const cors = require('cors');
 
 
-const MY_HOT_WALLET_ADDRESS = 'UQA1vA2bxiZinSSAVLXObmjWiDwMlkZx7kDmHQdypYMUqquT';
+   const MY_HOT_WALLET_ADDRESS = process.env.MY_HOT_WALLET_ADDRESS;
 
 const app = express();
 app.set('trust proxy', 1);
@@ -102,25 +102,45 @@ async function checkTransactionStatus(transactionHashOrBoc) {
 
     // Если получили BOC вместо хеша, отправляем BOC и получаем хеш
     if (transactionHashOrBoc.startsWith('te6cck')) {
-      console.log('Received BOC instead of hash, sending BOC to get hash');
+      console.log('Received BOC:', transactionHashOrBoc);
       const boc = TonWeb.utils.base64ToBytes(transactionHashOrBoc);
+      console.log('Decoded BOC:', boc);
       try {
+        // Проверка валидности BOC
+        const cell = Cell.fromBoc(Buffer.from(transactionHashOrBoc, 'base64'))[0];
+        console.log('BOC is valid');
+
         const result = await tonweb.provider.sendBoc(boc);
         hash = result.hash;
         console.log('Obtained hash from BOC:', hash);
       } catch (bocError) {
         if (bocError.message.includes('duplicate message')) {
           console.log('BOC already sent, trying to get transaction info');
+          // Получаем последние транзакции для MY_HOT_WALLET_ADDRESS
+          const recentTransactions = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 10);
+          console.log('Recent transactions:', JSON.stringify(recentTransactions, null, 2));
+          // Ищем транзакцию с соответствующим BOC
+          const matchingTx = recentTransactions.find(tx => tx.boc === transactionHashOrBoc);
+          if (matchingTx) {
+            hash = matchingTx.hash;
+            console.log('Found matching transaction with hash:', hash);
+          } else {
+            console.log('No matching transaction found for the given BOC');
+          }
         } else {
+          console.error('Error processing BOC:', bocError);
           throw bocError;
         }
       }
     } else if (!transactionHashOrBoc.match(/^[0-9a-fA-F]{64}$/)) {
+      console.error('Invalid transaction hash format:', transactionHashOrBoc);
       throw new Error('Invalid transaction hash or BOC');
     }
 
     // Получаем информацию о транзакции из сети TON
+    console.log(`Requesting transaction info for hash: ${hash}`);
     const transactionInfo = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 1, undefined, hash);
+    console.log('Raw transaction info:', JSON.stringify(transactionInfo, null, 2));
     
     if (!transactionInfo || transactionInfo.length === 0) {
       console.log(`Transaction ${hash} not found`);
@@ -230,6 +250,7 @@ app.get('/getDepositAddress', async (req, res) => {
 
 // Эндпоинт для проверки статуса транзакции
 app.get('/checkTransactionStatus', async (req, res) => {
+  console.log('Raw query:', req.query);
   const { transactionHash, boc, telegramId, ticketAmount } = req.query;
   
   console.log(`Received request: telegramId=${telegramId}, ticketAmount=${ticketAmount}, transactionHash=${transactionHash}, boc=${boc}`);

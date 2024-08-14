@@ -38,3 +38,10 @@ env:
     availability:
       - BUILD
       - RUNTIME
+
+  - variable: MY_HOT_WALLET_ADDRESS
+    secret: projects/method-e6c6c/secrets/MY_HOT_WALLET_ADDRESS
+    availability:
+      - BUILD
+      - RUNTIME
+
