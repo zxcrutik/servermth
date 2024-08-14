@@ -94,6 +94,152 @@ async function generateDepositAddress(telegramId) {
   }
 }
 
+
+
+async function verifyTransaction(uniqueId, telegramId, ticketAmount, transactionHash) {
+  console.log(`Начало проверки транзакции. UniqueId: ${uniqueId}, TelegramId: ${telegramId}, Количество билетов: ${ticketAmount}, TransactionHash: ${transactionHash}`);
+
+  async function getDepositAddress(telegramId) {
+      try {
+          const userRef = database.ref(`users/${telegramId}`);
+          const snapshot = await userRef.once('value');
+          const userData = snapshot.val();
+          if (userData && userData.wallet && userData.wallet.address) {
+              return userData.wallet.address;
+          }
+          throw new Error('Адрес депозита не найден для пользователя');
+      } catch (error) {
+          console.error('Ошибка при получении адреса депозита:', error);
+          throw error;
+      }
+  }
+
+  async function getTransactionHash(telegramId, ticketAmount, uniqueId) {
+      console.log(`Поиск транзакции. TelegramId: ${telegramId}, TicketAmount: ${ticketAmount}, UniqueId: ${uniqueId}`);
+      try {
+          const depositAddress = await getDepositAddress(telegramId);
+          console.log(`Используемый адрес депозита: ${depositAddress}`);
+
+          const transactions = await tonweb.provider.getTransactions(depositAddress, 20);
+          console.log(`Получено ${transactions.length} транзакций`);
+
+          if (transactions.length === 0) {
+              console.log('Транзакции не найдены');
+              return null;
+          }
+
+          const currentTime = new Date();
+          const transaction = transactions.find(tx => {
+              if (tx.in_msg) {
+                  const txTime = new Date(tx.utime * 1000);
+                  const timeDiff = (currentTime - txTime) / 1000 / 60;
+
+                  console.log(`Проверка транзакции: Amount: ${tx.in_msg.value}, Время: ${txTime}, Разница во времени: ${timeDiff} минут`);
+
+                  return tx.in_msg.message.includes(uniqueId) && timeDiff <= 5;
+              }
+              return false;
+          });
+
+          if (transaction) {
+              console.log('Найдена подходящая транзакция:', transaction);
+              return transaction.transaction_id.hash;
+          } else {
+              console.log(`Подходящая транзакция не найдена для TicketAmount: ${ticketAmount}, UniqueId: ${uniqueId}`);
+              return null;
+          }
+      } catch (error) {
+          console.error('Ошибка при получении хеша транзакции:', error);
+          return null;
+      }
+  }
+
+  // Если transactionHash не предоставлен, пытаемся его найти
+  if (!transactionHash) {
+      transactionHash = await getTransactionHash(telegramId, ticketAmount, uniqueId);
+      if (!transactionHash) {
+          console.log('Не удалось найти хеш транзакции');
+          return {
+              isConfirmed: false,
+              status: 'pending',
+              message: 'Транзакция не найдена'
+          };
+      }
+  }
+
+  async function checkTransactionLocally(uniqueId) {
+      try {
+          const transactions = await tonweb.provider.getTransactions(await getDepositAddress(telegramId), 10);
+          console.log('Локальная проверка транзакций:', transactions);
+          const transaction = transactions.find(tx => tx.in_msg && tx.in_msg.message && tx.in_msg.message.includes(uniqueId));
+          const isConfirmed = transaction && transaction.status === 3;
+          console.log('Результат локальной проверки:', isConfirmed);
+          return isConfirmed;
+      } catch (error) {
+          console.error('Ошибка при локальной проверке транзакции:', error);
+          return false;
+      }
+  }
+
+  async function checkTransactionViaToncenter(transactionHash) {
+        try {
+            const response = await fetch(`https://toncenter.com/api/v2/transactions/${transactionHash}`, {
+                headers: { 'X-API-Key': TONCENTER_API_KEY }
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            console.log('Ответ от Toncenter:', data);
+            const isConfirmed = data.result && data.result.status === 'confirmed';
+            console.log('Результат проверки через Toncenter:', isConfirmed);
+            return isConfirmed;
+        } catch (error) {
+            console.error('Ошибка при проверке через Toncenter:', error);
+            return false;
+        }
+    }
+
+  async function checkTransactionExternally(transactionHash) {
+      try {
+          if (!transactionHash) {
+              console.log('TransactionHash не предоставлен для внешней проверки');
+              return false;
+          }
+          
+          const url = `https://tonapi.io/v2/blockchain/transactions/${transactionHash}`;
+          console.log('URL запроса:', url);
+          
+          const response = await fetch(url);
+          if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const data = await response.json();
+          console.log('Внешняя проверка транзакции:', data);
+          const isConfirmed = data.success === true;
+          console.log('Результат внешней проверки:', isConfirmed);
+          return isConfirmed;
+      } catch (error) {
+          console.error('Ошибка при внешней проверке транзакции:', error);
+          return false;
+      }
+  }
+
+  const isConfirmedLocally = await checkTransactionLocally(uniqueId);
+    const isConfirmedViaToncenter = await checkTransactionViaToncenter(transactionHash);
+    const isConfirmedExternally = await checkTransactionExternally(transactionHash);
+
+    console.log(`Результаты проверок: Локально: ${isConfirmedLocally}, Toncenter: ${isConfirmedViaToncenter}, Внешне: ${isConfirmedExternally}`);
+
+    const isConfirmed = isConfirmedLocally || isConfirmedViaToncenter || isConfirmedExternally;
+
+    return {
+        isConfirmed,
+        status: isConfirmed ? 'confirmed' : 'pending',
+        message: isConfirmed ? 'Транзакция подтверждена' : 'Транзакция все еще в обработке'
+    };
+}
+
 app.get('/getDepositAddress', async (req, res) => {
   const telegramId = req.query.telegramId;
   console.log('Received request for deposit address. Telegram ID:', telegramId);
@@ -136,82 +282,27 @@ app.get('/checkTransactionStatus', async (req, res) => {
   const { uniqueId, telegramId, ticketAmount, transactionHash } = req.query;
   
   try {
-    // Сначала проверяем статус транзакции через существующую логику
-    const status = await checkTransactionStatus(uniqueId, telegramId, ticketAmount);
+    const verificationResult = await verifyTransaction(uniqueId, telegramId, ticketAmount, transactionHash);
     
-    // Если статус не подтвержден, проверяем через Toncenter
-    if (status.status !== 'confirmed' && transactionHash) {
-      const toncenterResponse = await fetch(`https://toncenter.com/api/v2/transactions/${transactionHash}`, {
-        headers: {
-          'X-API-Key': TONCENTER_API_KEY
-        }
-      });
-      
-      if (toncenterResponse.ok) {
-        const toncenterData = await toncenterResponse.json();
-        if (toncenterData.result && toncenterData.result.status === 'confirmed') {
-          status.status = 'confirmed';
-        }
-      } else {
-        console.error(`Ошибка Toncenter: ${toncenterResponse.status} ${toncenterResponse.statusText}`);
-      }
-    }
-    
-    if (status.status === 'confirmed') {
-      // Если транзакция подтверждена, попытаемся перевести средства на горячий кошелек
+    if (verificationResult.isConfirmed) {
       const transferResult = await attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount);
       
       if (transferResult.status === 'success') {
-        // Если перевод успешен, обновляем баланс билетов
         await updateTicketBalance(telegramId, ticketAmount, uniqueId);
+        verificationResult.ticketsUpdated = true;
+      } else {
+        verificationResult.ticketsUpdated = false;
       }
       
-      status.transferStatus = transferResult.status;
+      verificationResult.transferStatus = transferResult.status;
     }
     
-    res.json(status);
+    res.json(verificationResult);
   } catch (error) {
     console.error('Ошибка при проверке статуса транзакции:', error);
     res.status(500).json({ status: 'error', message: error.message });
   }
 });
-
-// Эндпоинт для проверки статуса транзакции
-app.get('/checkTransaction', async (req, res) => {
-  const { telegramId, uniqueId, amount, price } = req.query;
-
-  try {
-      const transactionSnapshot = await database.ref(`transactions/${uniqueId}`).once('value');
-      const transactionData = transactionSnapshot.val();
-
-      if (!transactionData) {
-          return res.json({ status: 'pending' });
-      }
-
-      if (transactionData.processed) {
-          return res.json({ status: 'confirmed' });
-      }
-
-      const transactions = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 100);
-      const matchingTx = transactions.find(tx => 
-          tx.in_msg && 
-          tx.in_msg.message === `buytickets:${amount}:${uniqueId}` &&
-          new BN(tx.in_msg.value).gte(TonWeb.utils.toNano(price))
-      );
-
-      if (matchingTx) {
-          await markTransactionAsProcessed(uniqueId);
-          res.json({ status: 'confirmed' });
-      } else {
-          res.json({ status: 'pending' });
-      }
-  } catch (error) {
-      console.error('Ошибка при проверке транзакции:', error);
-      res.status(500).json({ status: 'error', message: error.message });
-  }
-});
-
-
 
 app.post('/updateTicketBalance', async (req, res) => {
   const { telegramId, amount, uniqueId } = req.body;
@@ -320,8 +411,8 @@ async function markTransactionAsProcessed(uniqueId) {
   await database.ref(`transactions/${uniqueId}/processed`).set(true);
 }
 
-async function attemptTransferToHotWallet(telegramId, uniqueId) {
-  console.log(`Попытка перевода на горячий кошелек. Telegram ID: ${telegramId}, Unique ID: ${uniqueId}`);
+async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
+  console.log(`Попытка перевода на горячий кошелек. Telegram ID: ${telegramId}, Unique ID: ${uniqueId}, Ticket Amount: ${ticketAmount}`);
   try {
     // Получаем информацию о пользователе и транзакции
     const userSnapshot = await database.ref(`users/${telegramId}`).once('value');
@@ -375,9 +466,9 @@ async function attemptTransferToHotWallet(telegramId, uniqueId) {
     await updateTransactionStatus(uniqueId, 'pending');
 
     // Запускаем процесс проверки статуса транзакции
-    checkTransferStatus(uniqueId, telegramId, amountToTransfer);
+    await checkTransferStatus(uniqueId, telegramId, ticketAmount, amountToTransfer);
 
-    return { status: 'pending', message: 'Перевод инициирован, ожидается подтверждение' };
+    return { status: 'success', message: 'Перевод инициирован, ожидается подтверждение' };
   } catch (error) {
     console.error('Ошибка в attemptTransferToHotWallet:', error);
     await updateUserTransferStatus(telegramId, 'failed', null, null, error.message);
@@ -389,7 +480,7 @@ async function updateTransactionStatus(uniqueId, status) {
   await database.ref(`transactions/${uniqueId}/status`).set(status);
 }
 
-async function checkTransferStatus(uniqueId, telegramId, amount) {
+async function checkTransferStatus(uniqueId, telegramId, ticketAmount, amount) {
   let attempts = 0;
   const maxAttempts = 10;
   const delay = 30000; // 30 секунд
@@ -407,7 +498,11 @@ async function checkTransferStatus(uniqueId, telegramId, amount) {
           await updateTransactionStatus(uniqueId, 'confirmed');
           await updateUserTransferStatus(telegramId, 'confirmed', { uniqueId }, amount);
           console.log(`Транзакция ${uniqueId} подтверждена`);
-          return;
+          
+          // Обновляем баланс билетов
+          await updateTicketBalance(telegramId, parseInt(ticketAmount), uniqueId);
+          
+          return { status: 'success', ticketsUpdated: true };
         }
       }
 
@@ -417,6 +512,7 @@ async function checkTransferStatus(uniqueId, telegramId, amount) {
         console.log(`Достигнуто максимальное количество попыток для транзакции ${uniqueId}`);
         await updateTransactionStatus(uniqueId, 'failed');
         await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, amount, 'Превышено время ожидания подтверждения');
+        return { status: 'failed', ticketsUpdated: false };
       }
     } catch (error) {
       console.error(`Ошибка при проверке статуса транзакции ${uniqueId}:`, error);
@@ -425,11 +521,20 @@ async function checkTransferStatus(uniqueId, telegramId, amount) {
       } else {
         await updateTransactionStatus(uniqueId, 'failed');
         await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, amount, error.message);
+        return { status: 'error', ticketsUpdated: false };
       }
     }
   };
 
-  checkStatus();
+  return checkStatus();
+}
+
+async function updateTicketBalance(telegramId, ticketAmount, uniqueId) {
+  const userRef = database.ref(`users/${telegramId}`);
+  await userRef.child('ticketBalance').transaction(currentBalance => {
+    return (currentBalance || 0) + ticketAmount;
+  });
+  await database.ref(`transactions/${uniqueId}/processed`).set(true);
 }
 
 async function getSeqno(wallet) {
@@ -456,59 +561,31 @@ async function updateUserTransferStatus(telegramId, status, result, amount, erro
   }
 }
 
-async function checkTransactionStatus(uniqueId, telegramId) {
+app.get('/checkTransactionStatus', async (req, res) => {
+  const { uniqueId, telegramId, ticketAmount, transactionHash } = req.query;
+  
   try {
-    const transactionSnapshot = await database.ref(`transactions/${uniqueId}`).once('value');
-    const transactionData = transactionSnapshot.val();
-
-    if (!transactionData) {
-      return { status: 'pending', message: 'Транзакция еще не найдена' };
-    }
-
-    if (transactionData.processed) {
-      return { status: 'confirmed', message: 'Транзакция подтверждена' };
-    }
-
-    const transactions = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 10);
-    const tx = transactions.find(tx => tx.in_msg && tx.in_msg.message === `Transfer:${uniqueId}`);
+    const status = await verifyTransaction(uniqueId, telegramId, ticketAmount, transactionHash);
     
-    if (tx) {
-      if (tx.status === 3) {
-        // Обновляем баланс билетов пользователя
-        await updateTicketBalance(telegramId, uniqueId);
-        return { status: 'confirmed', message: 'Транзакция подтверждена' };
-      } else if (tx.status === 0) {
-        return { status: 'pending', message: 'Транзакция в процессе обработки' };
+    if (status.isConfirmed) {
+      const transferResult = await attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount);
+      
+      if (transferResult.status === 'success') {
+        await updateTicketBalance(telegramId, ticketAmount, uniqueId);
+        status.ticketsUpdated = true;
+      } else {
+        status.ticketsUpdated = false;
       }
+      
+      status.transferStatus = transferResult.status;
     }
     
-    return { status: 'pending', message: 'Транзакция еще не найдена в блокчейне' };
+    res.json(status);
   } catch (error) {
     console.error('Ошибка при проверке статуса транзакции:', error);
-    return { status: 'error', message: error.message };
+    res.status(500).json({ status: 'error', message: error.message });
   }
-}
-
-async function updateTicketBalance(telegramId, uniqueId) {
-  // Получаем информацию о транзакции из базы данных
-  const transactionSnapshot = await database.ref(`transactions/${uniqueId}`).once('value');
-  const transactionData = transactionSnapshot.val();
-
-  if (!transactionData || transactionData.processed) {
-    throw new Error('Информация о транзакции не найдена или уже обработана');
-  }
-
-  // Обновляем баланс билетов пользователя
-  const userRef = database.ref(`users/${telegramId}`);
-  const newBalance = await userRef.child('ticketBalance').transaction(currentBalance => {
-    return (currentBalance || 0) + transactionData.amount;
-  });
-
-  // Отмечаем транзакцию как обработанную
-  await database.ref(`transactions/${uniqueId}/processed`).set(true);
-
-  return newBalance;
-}
+});
 
 const depositAddressCache = new Set();
 
@@ -529,26 +606,15 @@ async function isDepositAddress(address) {
 }
 
 async function onTransaction(tx) {
-  // Пропускаем исходящие транзакции
-  if (tx.out_msgs.length > 0) {
-    return;
-  }
-
-  // Проверяем, что tx.in_msg существует и имеет свойство value
-  if (!tx.in_msg || tx.in_msg.value === undefined) {
-    return;
-  }
-
-  // Пропускаем транзакции с нулевой стоимостью
-  if (tx.in_msg.value === '0') {
+  if (tx.out_msgs.length > 0 || !tx.in_msg || tx.in_msg.value === '0') {
     return;
   }
 
   try {
     if (await isDepositAddress(tx.account)) {
-      const txFromNode = await tonweb.provider.getTransactions(tx.account, 1, tx.lt, tx.hash);
-      if (txFromNode.length > 0) {
-        await processDeposit(txFromNode[0]);
+      const status = await verifyTransaction(tx.hash, null, null, tx.hash);
+      if (status.isConfirmed) {
+        await processDeposit(tx);
       }
     }
   } catch (error) {
