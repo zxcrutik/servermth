@@ -96,71 +96,69 @@ async function generateDepositAddress(telegramId) {
 
 async function checkTransactionStatus(transactionHashOrBoc) {
   try {
-    console.log(`Checking status for transaction: ${transactionHashOrBoc}`);
+    console.log(`Проверка статуса транзакции: ${transactionHashOrBoc}`);
 
     let hash = transactionHashOrBoc;
 
-    // Если получили BOC вместо хеша, отправляем BOC и получаем хеш
-    if (transactionHashOrBoc.startsWith('te6cck')) {
-      console.log('Received BOC:', transactionHashOrBoc);
+    // Обработка BOC
+    if (typeof transactionHashOrBoc === 'string' && transactionHashOrBoc.startsWith('te6cck')) {
+      console.log('Получен BOC:', transactionHashOrBoc);
       const boc = TonWeb.utils.base64ToBytes(transactionHashOrBoc);
-      console.log('Decoded BOC:', boc);
+      console.log('Декодированный BOC:', boc);
       try {
         // Проверка валидности BOC
         const cell = Cell.fromBoc(Buffer.from(transactionHashOrBoc, 'base64'))[0];
-        console.log('BOC is valid');
+        console.log('BOC валиден');
 
         const result = await tonweb.provider.sendBoc(boc);
         hash = result.hash;
-        console.log('Obtained hash from BOC:', hash);
+        console.log('Получен хеш из BOC:', hash);
       } catch (bocError) {
-        if (bocError.message.includes('duplicate message')) {
-          console.log('BOC already sent, trying to get transaction info');
-          // Получаем последние транзакции для MY_HOT_WALLET_ADDRESS
+        if (bocError.message && bocError.message.includes('duplicate message')) {
+          console.log('BOC уже отправлен, пытаемся получить информацию о транзакции');
           const recentTransactions = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 10);
-          console.log('Recent transactions:', JSON.stringify(recentTransactions, null, 2));
-          // Ищем транзакцию с соответствующим BOC
+          console.log('Последние транзакции:', JSON.stringify(recentTransactions, null, 2));
           const matchingTx = recentTransactions.find(tx => tx.boc === transactionHashOrBoc);
           if (matchingTx) {
             hash = matchingTx.hash;
-            console.log('Found matching transaction with hash:', hash);
+            console.log('Найдена соответствующая транзакция с хешем:', hash);
           } else {
-            console.log('No matching transaction found for the given BOC');
+            console.log('Не найдена соответствующая транзакция для данного BOC');
+            return { status: 'unknown', error: 'No matching transaction found' };
           }
         } else {
-          console.error('Error processing BOC:', bocError);
-          throw bocError;
+          console.error('Ошибка обработки BOC:', bocError);
+          return { status: 'failed', error: bocError.message };
         }
       }
-    } else if (!transactionHashOrBoc.match(/^[0-9a-fA-F]{64}$/)) {
-      console.error('Invalid transaction hash format:', transactionHashOrBoc);
-      throw new Error('Invalid transaction hash or BOC');
+    } else if (typeof transactionHashOrBoc !== 'string' || !transactionHashOrBoc.match(/^[0-9a-fA-F]{64}$/)) {
+      console.error('Неверный формат хеша транзакции:', transactionHashOrBoc);
+      return { status: 'failed', error: 'Invalid transaction hash format' };
     }
 
-    // Получаем информацию о транзакции из сети TON
-    console.log(`Requesting transaction info for hash: ${hash}`);
+    // Получение информации о транзакции
+    console.log(`Запрос информации о транзакции для хеша: ${hash}`);
     const transactionInfo = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 1, undefined, hash);
-    console.log('Raw transaction info:', JSON.stringify(transactionInfo, null, 2));
+    console.log('Сырая информация о транзакции:', JSON.stringify(transactionInfo, null, 2));
     
     if (!transactionInfo || transactionInfo.length === 0) {
-      console.log(`Transaction ${hash} not found`);
+      console.log(`Транзакция ${hash} не найдена`);
       return { status: 'unknown', hash: hash };
     }
 
     const tx = transactionInfo[0];
-    
-    console.log(`Transaction details:`, JSON.stringify(tx, null, 2));
+    console.log(`Детали транзакции:`, JSON.stringify(tx, null, 2));
 
-    // Проверяем статус транзакции
+    // Определение статуса транзакции
     let status;
-    if (tx.status === 3) { // 3 означает "финализированная" транзакция
-      console.log(`Transaction ${hash} is confirmed`);
+    if (tx.status === 3) {
+      console.log(`Транзакция ${hash} подтверждена`);
       status = 'confirmed';
-    } else if (tx.status === 0) { // 0 означает "в процессе"
-      console.log(`Transaction ${hash} is still pending`);
+    } else if (tx.status === 0) {
+      console.log(`Транзакция ${hash} все еще в ожидании`);
       status = 'pending';
     } else {
-      console.log(`Transaction ${hash} has unknown status: ${tx.status}`);
+      console.log(`Транзакция ${hash} имеет неизвестный статус: ${tx.status}`);
       status = 'unknown';
     }
 
@@ -170,52 +168,61 @@ async function checkTransactionStatus(transactionHashOrBoc) {
       details: tx
     };
   } catch (error) {
-    console.error(`Error checking transaction status: ${error.message}`);
+    console.error(`Ошибка при проверке статуса транзакции: ${error.message}`);
     return { status: 'failed', error: error.message };
   }
 }
 
 async function updateTicketBalance(telegramId, ticketAmount, transactionHashOrBoc = null) {
+  console.log(`Попытка обновления баланса билетов для пользователя ${telegramId}: добавление ${ticketAmount} билетов`);
   try {
     if (!telegramId || isNaN(ticketAmount)) {
-      throw new Error('telegramId and ticketAmount are required');
+      throw new Error('Требуются telegramId и ticketAmount');
     }
 
     if (ticketAmount <= 0) {
-      throw new Error('ticketAmount must be positive');
+      throw new Error('ticketAmount должен быть положительным числом');
     }
 
     const userRef = database.ref(`users/${telegramId}`);
     let newBalance;
 
     await database.ref().transaction(async (data) => {
-      if (!data) return data;
+      if (!data) {
+        console.log('Данные не найдены, инициализация новой структуры');
+        return { users: {}, processedTransactions: {} };
+      }
 
       if (transactionHashOrBoc) {
-        // Проверяем, не была ли эта транзакция уже обработана
-        if (data.processedTransactions && data.processedTransactions[transactionHashOrBoc]) {
-          throw new Error('Transaction already processed');
+        if (!data.processedTransactions) data.processedTransactions = {};
+        if (data.processedTransactions[transactionHashOrBoc]) {
+          console.log(`Транзакция ${transactionHashOrBoc} уже была обработана`);
+          return; // Прерываем транзакцию, не изменяя данные
         }
       }
 
       if (!data.users) data.users = {};
-      if (!data.users[telegramId]) data.users[telegramId] = {};
+      if (!data.users[telegramId]) data.users[telegramId] = { ticketBalance: 0 };
       
-      data.users[telegramId].ticketBalance = (data.users[telegramId].ticketBalance || 0) + ticketAmount;
+      data.users[telegramId].ticketBalance += ticketAmount;
       newBalance = data.users[telegramId].ticketBalance;
 
       if (transactionHashOrBoc) {
-        if (!data.processedTransactions) data.processedTransactions = {};
         data.processedTransactions[transactionHashOrBoc] = true;
       }
 
+      console.log(`Обновлен баланс билетов для пользователя ${telegramId}: новый баланс ${newBalance}`);
       return data;
     });
 
-    console.log(`Updated ticket balance for user ${telegramId}: added ${ticketAmount} tickets, new balance: ${newBalance}`);
+    if (newBalance === undefined) {
+      throw new Error('Не удалось обновить баланс билетов');
+    }
+
+    console.log(`Успешно обновлен баланс билетов для пользователя ${telegramId}: добавлено ${ticketAmount} билетов, новый баланс: ${newBalance}`);
     return newBalance;
   } catch (error) {
-    console.error(`Error updating ticket balance for user ${telegramId}:`, error);
+    console.error(`Ошибка при обновлении баланса билетов для пользователя ${telegramId}:`, error);
     throw error;
   }
 }
@@ -381,40 +388,37 @@ async function processDeposit(tx) {
 }
 
 async function attemptTransferToHotWallet(telegramId, addressOrTransactionHashOrBoc) {
-  console.log(`Attempting transfer to hot wallet. Received: ${addressOrTransactionHashOrBoc}`);
+  console.log(`Попытка перевода на горячий кошелек. Получено: ${addressOrTransactionHashOrBoc}`);
   try {
     let hash, address;
 
     if (addressOrTransactionHashOrBoc.startsWith('te6cck')) {
-      // Это BOC, нужно отправить его и получить хеш
-      console.log('Received BOC, sending BOC to get hash');
+      console.log('Получен BOC, отправляем BOC для получения хеша');
       const boc = TonWeb.utils.base64ToBytes(addressOrTransactionHashOrBoc);
       const result = await tonweb.provider.sendBoc(boc);
       hash = result.hash;
-      console.log('Obtained hash from BOC:', hash);
+      console.log('Получен хеш из BOC:', hash);
     } else if (addressOrTransactionHashOrBoc.startsWith('EQ') || addressOrTransactionHashOrBoc.startsWith('UQ')) {
-      // Это адрес
       address = addressOrTransactionHashOrBoc;
     } else {
-      // Предполагаем, что это хеш транзакции
       hash = addressOrTransactionHashOrBoc;
     }
 
     if (address) {
       const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(address));
-      console.log('Current balance of temporary wallet:', balance.toString());
+      console.log('Текущий баланс временного кошелька:', balance.toString());
 
       const minTransferAmount = TonWeb.utils.toNano('0.001');
       const feeReserve = TonWeb.utils.toNano('0.01');
 
       if (balance.lt(minTransferAmount.add(feeReserve))) {
-        console.log('Insufficient balance for transfer');
-        return { status: 'insufficient_balance', message: 'Insufficient balance for transfer' };
+        console.log('Недостаточный баланс для перевода');
+        return { status: 'insufficient_balance', message: 'Недостаточный баланс для перевода' };
       }
 
       let amountToTransfer = balance.sub(feeReserve);
       if (amountToTransfer.lt(minTransferAmount)) {
-        console.log('Amount too small, attempting to transfer entire balance');
+        console.log('Сумма слишком мала, пытаемся перевести весь баланс');
         amountToTransfer = balance;
       }
 
@@ -431,34 +435,38 @@ async function attemptTransferToHotWallet(telegramId, addressOrTransactionHashOr
       }
 
       if (!keyPair) {
-        console.log('No key pair found, attempting to create a new wallet');
+        console.log('Пара ключей не найдена, создаем новый кошелек');
         keyPair = await tonweb.utils.keyPair();
       }
 
       const { wallet } = await createWallet(keyPair);
       let seqno = await getSeqno(wallet);
 
-      console.log('Attempting to transfer funds to hot wallet');
+      console.log('Попытка перевода средств на горячий кошелек');
       const transfer = await wallet.methods.transfer({
         secretKey: keyPair.secretKey,
         toAddress: MY_HOT_WALLET_ADDRESS,
         amount: amountToTransfer,
         seqno: seqno,
-        payload: `Transfer from temporary wallet ${address}`,
+        payload: `Перевод с временного кошелька ${address}`,
         sendMode: 3,
       });
 
       const transferResult = await transfer.send();
-      console.log('Transfer result:', transferResult);
+      console.log('Результат перевода:', transferResult);
 
       if (!transferResult.hash) {
-        console.log('Transfer hash is undefined, waiting for confirmation...');
-        await new Promise(resolve => setTimeout(resolve, 10000));
-        const updatedResult = await checkTransactionStatus(address);
-        if (updatedResult.hash) {
-          transferResult.hash = updatedResult.hash;
-        } else {
-          throw new Error('Unable to get transaction hash after waiting');
+        console.log('Хеш перевода не определен, ожидаем подтверждения...');
+        for (let i = 0; i < 5; i++) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          const updatedResult = await checkTransactionStatus(address);
+          if (updatedResult && updatedResult.hash) {
+            transferResult.hash = updatedResult.hash;
+            break;
+          }
+        }
+        if (!transferResult.hash) {
+          throw new Error('Не удалось получить хеш транзакции после нескольких попыток');
         }
       }
 
@@ -467,29 +475,29 @@ async function attemptTransferToHotWallet(telegramId, addressOrTransactionHashOr
 
     // Проверка статуса транзакции
     const transactionStatus = await checkTransactionStatus(hash);
-    console.log('Transaction status:', transactionStatus);
+    console.log('Статус транзакции:', transactionStatus);
 
     await updateUserTransferStatus(telegramId, transactionStatus, { hash }, amountToTransfer);
 
     if (transactionStatus === 'confirmed') {
-      console.log('Transfer confirmed successfully');
+      console.log('Перевод успешно подтвержден');
       return { status: 'confirmed', hash: hash };
     } else if (transactionStatus === 'pending') {
-      console.log('Transfer is pending, please check later');
+      console.log('Перевод в ожидании, проверьте позже');
       return { status: 'pending', hash: hash };
     } else {
-      throw new Error(`Transfer failed with status: ${transactionStatus}`);
+      throw new Error(`Перевод не удался со статусом: ${transactionStatus}`);
     }
   } catch (error) {
-    console.error('Error in attemptTransferToHotWallet:', error);
+    console.error('Ошибка в attemptTransferToHotWallet:', error);
     await updateUserTransferStatus(telegramId, 'failed', null, null, error.message);
 
     if (error.message && error.message.includes('duplicate message')) {
-      console.log('Transaction might have been already sent, checking status...');
+      console.log('Возможно, транзакция уже была отправлена, проверяем статус...');
       const existingTransactionStatus = await checkTransactionStatus(addressOrTransactionHashOrBoc);
       if (existingTransactionStatus === 'confirmed') {
-        console.log('Previously sent transaction was confirmed');
-        return { status: 'confirmed', message: 'Transaction was already processed' };
+        console.log('Ранее отправленная транзакция была подтверждена');
+        return { status: 'confirmed', message: 'Транзакция уже была обработана' };
       }
     }
     return { status: 'error', message: error.message };
