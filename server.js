@@ -94,16 +94,37 @@ async function generateDepositAddress(telegramId) {
   }
 }
 
-async function checkTransactionStatus(transactionHash) {
+async function checkTransactionStatus(transactionHashOrBoc) {
   try {
-    console.log(`Checking status for transaction: ${transactionHash}`);
+    console.log(`Checking status for transaction: ${transactionHashOrBoc}`);
+
+    let hash = transactionHashOrBoc;
+
+    // Если получили BOC вместо хеша, отправляем BOC и получаем хеш
+    if (transactionHashOrBoc.startsWith('te6cck')) {
+      console.log('Received BOC instead of hash, sending BOC to get hash');
+      const boc = TonWeb.utils.base64ToBytes(transactionHashOrBoc);
+      try {
+        const result = await tonweb.provider.sendBoc(boc);
+        hash = result.hash;
+        console.log('Obtained hash from BOC:', hash);
+      } catch (bocError) {
+        if (bocError.message.includes('duplicate message')) {
+          console.log('BOC already sent, trying to get transaction info');
+        } else {
+          throw bocError;
+        }
+      }
+    } else if (!transactionHashOrBoc.match(/^[0-9a-fA-F]{64}$/)) {
+      throw new Error('Invalid transaction hash or BOC');
+    }
 
     // Получаем информацию о транзакции из сети TON
-    const transactionInfo = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 1, undefined, transactionHash);
+    const transactionInfo = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 1, undefined, hash);
     
     if (!transactionInfo || transactionInfo.length === 0) {
-      console.log(`Transaction ${transactionHash} not found`);
-      return 'unknown'; // Возвращаем 'unknown' вместо 'pending'
+      console.log(`Transaction ${hash} not found`);
+      return { status: 'unknown', hash: hash };
     }
 
     const tx = transactionInfo[0];
@@ -111,23 +132,30 @@ async function checkTransactionStatus(transactionHash) {
     console.log(`Transaction details:`, JSON.stringify(tx, null, 2));
 
     // Проверяем статус транзакции
+    let status;
     if (tx.status === 3) { // 3 означает "финализированная" транзакция
-      console.log(`Transaction ${transactionHash} is confirmed`);
-      return 'confirmed';
+      console.log(`Transaction ${hash} is confirmed`);
+      status = 'confirmed';
     } else if (tx.status === 0) { // 0 означает "в процессе"
-      console.log(`Transaction ${transactionHash} is still pending`);
-      return 'pending';
+      console.log(`Transaction ${hash} is still pending`);
+      status = 'pending';
     } else {
-      console.log(`Transaction ${transactionHash} has unknown status: ${tx.status}`);
-      return 'unknown'; // Возвращаем 'unknown' вместо 'pending'
+      console.log(`Transaction ${hash} has unknown status: ${tx.status}`);
+      status = 'unknown';
     }
+
+    return {
+      status: status,
+      hash: hash,
+      details: tx
+    };
   } catch (error) {
     console.error(`Error checking transaction status: ${error.message}`);
-    return 'failed';
+    return { status: 'failed', error: error.message };
   }
 }
 
-async function updateTicketBalance(telegramId, ticketAmount, transactionId = null) {
+async function updateTicketBalance(telegramId, ticketAmount, transactionHashOrBoc = null) {
   try {
     if (!telegramId || isNaN(ticketAmount)) {
       throw new Error('telegramId and ticketAmount are required');
@@ -143,9 +171,9 @@ async function updateTicketBalance(telegramId, ticketAmount, transactionId = nul
     await database.ref().transaction(async (data) => {
       if (!data) return data;
 
-      if (transactionId) {
+      if (transactionHashOrBoc) {
         // Проверяем, не была ли эта транзакция уже обработана
-        if (data.processedTransactions && data.processedTransactions[transactionId]) {
+        if (data.processedTransactions && data.processedTransactions[transactionHashOrBoc]) {
           throw new Error('Transaction already processed');
         }
       }
@@ -156,9 +184,9 @@ async function updateTicketBalance(telegramId, ticketAmount, transactionId = nul
       data.users[telegramId].ticketBalance = (data.users[telegramId].ticketBalance || 0) + ticketAmount;
       newBalance = data.users[telegramId].ticketBalance;
 
-      if (transactionId) {
+      if (transactionHashOrBoc) {
         if (!data.processedTransactions) data.processedTransactions = {};
-        data.processedTransactions[transactionId] = true;
+        data.processedTransactions[transactionHashOrBoc] = true;
       }
 
       return data;
@@ -202,45 +230,36 @@ app.get('/getDepositAddress', async (req, res) => {
 
 // Эндпоинт для проверки статуса транзакции
 app.get('/checkTransactionStatus', async (req, res) => {
-  const { transactionHash, telegramId, ticketAmount } = req.query;
+  const { transactionHash, boc, telegramId, ticketAmount } = req.query;
   
-  console.log(`Received request: telegramId=${telegramId}, ticketAmount=${ticketAmount}, transactionHash=${transactionHash}`);
+  console.log(`Received request: telegramId=${telegramId}, ticketAmount=${ticketAmount}, transactionHash=${transactionHash}, boc=${boc}`);
   
-  if (!telegramId || isNaN(ticketAmount) || !transactionHash) {
-    return res.status(400).json({ error: 'Telegram ID, ticket amount, and transaction hash are required' });
+  if (!telegramId || isNaN(ticketAmount) || (!transactionHash && !boc)) {
+    return res.status(400).json({ error: 'Telegram ID, ticket amount, and either transaction hash or BOC are required' });
   }
 
   try {
-    let hash = transactionHash;
-    if (transactionHash.startsWith('te6cck')) {
-      // Если получили BOC вместо хеша, отправляем BOC и получаем хеш
-      console.log('Received BOC instead of hash, sending BOC to get hash');
-      const boc = TonWeb.utils.base64ToBytes(transactionHash);
-      const result = await tonweb.provider.sendBoc(boc);
-      hash = result.hash;
-      console.log('Obtained hash from BOC:', hash);
-    }
-
-    const status = await checkTransactionStatus(hash);
+    const transactionHashOrBoc = transactionHash || boc;
+    const status = await checkTransactionStatus(transactionHashOrBoc);
     
-    console.log(`Transaction status for ${hash}: ${status}`);
+    console.log(`Transaction status for ${transactionHashOrBoc}: ${status}`);
 
     if (status === 'confirmed') {
       // Обновляем баланс билетов пользователя
-      const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount, 10));
+      const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount, 10), transactionHashOrBoc);
       console.log(`Transaction processed successfully. New balance for user ${telegramId}: ${newBalance}`);
       res.json({ status, newBalance });
     } else if (status === 'pending') {
-      console.log(`Transaction ${hash} is still pending`);
+      console.log(`Transaction ${transactionHashOrBoc} is still pending`);
       res.json({ status: 'pending' });
     } else if (status === 'unknown') {
-      console.log(`Transaction ${hash} has unknown status`);
+      console.log(`Transaction ${transactionHashOrBoc} has unknown status`);
       res.json({ status: 'unknown' });
     } else if (status === 'failed') {
-      console.log(`Transaction ${hash} failed`);
+      console.log(`Transaction ${transactionHashOrBoc} failed`);
       res.json({ status: 'failed' });
     } else {
-      console.log(`Transaction ${hash} has unexpected status: ${status}`);
+      console.log(`Transaction ${transactionHashOrBoc} has unexpected status: ${status}`);
       res.json({ status: 'unknown' });
     }
   } catch (error) {
@@ -253,10 +272,10 @@ app.get('/checkTransactionStatus', async (req, res) => {
 
 // Эндпоинт для обновления баланса билетов пользователя
 app.post('/updateTicketBalance', async (req, res) => {
-  const { telegramId, amount, transactionId } = req.body;
+  const { telegramId, amount, transactionHashOrBoc } = req.body;
 
   try {
-    const newBalance = await updateTicketBalance(telegramId, parseInt(amount, 10), transactionId);
+    const newBalance = await updateTicketBalance(telegramId, parseInt(amount, 10), transactionHashOrBoc);
     res.json({ newBalance });
   } catch (error) {
     console.error('Error in /updateTicketBalance:', error);
@@ -340,103 +359,118 @@ async function processDeposit(tx) {
   }
 }
 
-async function attemptTransferToHotWallet(telegramId, address) {
-  console.log(`Attempting transfer to hot wallet for account: ${address}`);
+async function attemptTransferToHotWallet(telegramId, addressOrTransactionHashOrBoc) {
+  console.log(`Attempting transfer to hot wallet. Received: ${addressOrTransactionHashOrBoc}`);
   try {
-    const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(address));
-    console.log('Current balance of temporary wallet:', balance.toString());
+    let hash, address;
 
-    const minTransferAmount = TonWeb.utils.toNano('0.001');
-    const feeReserve = TonWeb.utils.toNano('0.01');
-
-    if (balance.lt(minTransferAmount.add(feeReserve))) {
-      console.log('Insufficient balance for transfer');
-      return { status: 'insufficient_balance', message: 'Insufficient balance for transfer' };
-    }
-
-    let amountToTransfer = balance.sub(feeReserve);
-    if (amountToTransfer.lt(minTransferAmount)) {
-      console.log('Amount too small, attempting to transfer entire balance');
-      amountToTransfer = balance;
-    }
-
-    let keyPair;
-    if (telegramId) {
-      const userSnapshot = await database.ref(`users/${telegramId}`).once('value');
-      const userData = userSnapshot.val();
-      if (userData && userData.wallet) {
-        keyPair = {
-          publicKey: Buffer.from(userData.wallet.publicKey, 'hex'),
-          secretKey: Buffer.from(userData.wallet.secretKey, 'hex')
-        };
-      }
-    }
-
-    if (!keyPair) {
-      console.log('No key pair found, attempting to create a new wallet');
-      keyPair = await tonweb.utils.keyPair();
-    }
-
-    const { wallet } = await createWallet(keyPair);
-    let seqno = await getSeqno(wallet);
-
-    console.log('Attempting to transfer funds to hot wallet');
-    const transfer = await wallet.methods.transfer({
-      secretKey: keyPair.secretKey,
-      toAddress: MY_HOT_WALLET_ADDRESS,
-      amount: amountToTransfer,
-      seqno: seqno,
-      payload: `Transfer from temporary wallet ${address}`,
-      sendMode: 3,
-    });
-
-    try {
-      const transferResult = await transfer.send();
-console.log('Transfer result:', transferResult);
-
-if (!transferResult.hash) {
-    console.log('Transfer hash is undefined, waiting for confirmation...');
-    // Ждем некоторое время и пытаемся получить хеш снова
-    await new Promise(resolve => setTimeout(resolve, 10000));
-    const updatedResult = await checkTransactionStatus(address);
-    if (updatedResult.hash) {
-        transferResult.hash = updatedResult.hash;
+    if (addressOrTransactionHashOrBoc.startsWith('te6cck')) {
+      // Это BOC, нужно отправить его и получить хеш
+      console.log('Received BOC, sending BOC to get hash');
+      const boc = TonWeb.utils.base64ToBytes(addressOrTransactionHashOrBoc);
+      const result = await tonweb.provider.sendBoc(boc);
+      hash = result.hash;
+      console.log('Obtained hash from BOC:', hash);
+    } else if (addressOrTransactionHashOrBoc.startsWith('EQ') || addressOrTransactionHashOrBoc.startsWith('UQ')) {
+      // Это адрес
+      address = addressOrTransactionHashOrBoc;
     } else {
-        throw new Error('Unable to get transaction hash');
+      // Предполагаем, что это хеш транзакции
+      hash = addressOrTransactionHashOrBoc;
     }
-}
 
-// Проверка статуса транзакции
-const transactionStatus = await checkTransactionStatus(transferResult.hash);
-console.log('Transaction status:', transactionStatus);
+    if (address) {
+      const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(address));
+      console.log('Current balance of temporary wallet:', balance.toString());
 
-      await updateUserTransferStatus(telegramId, transactionStatus, transferResult, amountToTransfer);
+      const minTransferAmount = TonWeb.utils.toNano('0.001');
+      const feeReserve = TonWeb.utils.toNano('0.01');
 
-      if (transactionStatus === 'confirmed') {
-        console.log('Transfer confirmed successfully');
-        return { status: 'confirmed', hash: transferResult.hash };
-      } else if (transactionStatus === 'pending') {
-        console.log('Transfer is pending, please check later');
-        return { status: 'pending', hash: transferResult.hash };
-      } else {
-        throw new Error(`Transfer failed with status: ${transactionStatus}`);
+      if (balance.lt(minTransferAmount.add(feeReserve))) {
+        console.log('Insufficient balance for transfer');
+        return { status: 'insufficient_balance', message: 'Insufficient balance for transfer' };
       }
-    } catch (transferError) {
-      console.error('Error transferring from deposit wallet to hot wallet:', transferError);
-      await updateUserTransferStatus(telegramId, 'failed', null, null, transferError.message);
 
-      if (transferError.message && transferError.message.includes('duplicate message')) {
-        console.log('Transaction might have been already sent, checking status...');
-        const existingTransactionStatus = await checkTransactionStatus(address);
-        if (existingTransactionStatus === 'confirmed') {
-          console.log('Previously sent transaction was confirmed');
-          return { status: 'confirmed', message: 'Transaction was already processed' };
+      let amountToTransfer = balance.sub(feeReserve);
+      if (amountToTransfer.lt(minTransferAmount)) {
+        console.log('Amount too small, attempting to transfer entire balance');
+        amountToTransfer = balance;
+      }
+
+      let keyPair;
+      if (telegramId) {
+        const userSnapshot = await database.ref(`users/${telegramId}`).once('value');
+        const userData = userSnapshot.val();
+        if (userData && userData.wallet) {
+          keyPair = {
+            publicKey: Buffer.from(userData.wallet.publicKey, 'hex'),
+            secretKey: Buffer.from(userData.wallet.secretKey, 'hex')
+          };
         }
       }
-      throw transferError;
+
+      if (!keyPair) {
+        console.log('No key pair found, attempting to create a new wallet');
+        keyPair = await tonweb.utils.keyPair();
+      }
+
+      const { wallet } = await createWallet(keyPair);
+      let seqno = await getSeqno(wallet);
+
+      console.log('Attempting to transfer funds to hot wallet');
+      const transfer = await wallet.methods.transfer({
+        secretKey: keyPair.secretKey,
+        toAddress: MY_HOT_WALLET_ADDRESS,
+        amount: amountToTransfer,
+        seqno: seqno,
+        payload: `Transfer from temporary wallet ${address}`,
+        sendMode: 3,
+      });
+
+      const transferResult = await transfer.send();
+      console.log('Transfer result:', transferResult);
+
+      if (!transferResult.hash) {
+        console.log('Transfer hash is undefined, waiting for confirmation...');
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        const updatedResult = await checkTransactionStatus(address);
+        if (updatedResult.hash) {
+          transferResult.hash = updatedResult.hash;
+        } else {
+          throw new Error('Unable to get transaction hash after waiting');
+        }
+      }
+
+      hash = transferResult.hash;
+    }
+
+    // Проверка статуса транзакции
+    const transactionStatus = await checkTransactionStatus(hash);
+    console.log('Transaction status:', transactionStatus);
+
+    await updateUserTransferStatus(telegramId, transactionStatus, { hash }, amountToTransfer);
+
+    if (transactionStatus === 'confirmed') {
+      console.log('Transfer confirmed successfully');
+      return { status: 'confirmed', hash: hash };
+    } else if (transactionStatus === 'pending') {
+      console.log('Transfer is pending, please check later');
+      return { status: 'pending', hash: hash };
+    } else {
+      throw new Error(`Transfer failed with status: ${transactionStatus}`);
     }
   } catch (error) {
     console.error('Error in attemptTransferToHotWallet:', error);
+    await updateUserTransferStatus(telegramId, 'failed', null, null, error.message);
+
+    if (error.message && error.message.includes('duplicate message')) {
+      console.log('Transaction might have been already sent, checking status...');
+      const existingTransactionStatus = await checkTransactionStatus(addressOrTransactionHashOrBoc);
+      if (existingTransactionStatus === 'confirmed') {
+        console.log('Previously sent transaction was confirmed');
+        return { status: 'confirmed', message: 'Transaction was already processed' };
+      }
+    }
     return { status: 'error', message: error.message };
   }
 }
