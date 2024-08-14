@@ -334,9 +334,14 @@ async function attemptTransferToHotWallet(telegramId, address) {
     const minTransferAmount = TonWeb.utils.toNano('0.001');
     const feeReserve = TonWeb.utils.toNano('0.01');
 
+    if (balance.lt(minTransferAmount.add(feeReserve))) {
+      console.log('Insufficient balance for transfer');
+      return;
+    }
+
     let amountToTransfer = balance.sub(feeReserve);
-    if (amountToTransfer.lt(minTransferAmount) || balance.lte(feeReserve)) {
-      console.log('Amount too small or insufficient balance, attempting to transfer entire balance');
+    if (amountToTransfer.lt(minTransferAmount)) {
+      console.log('Amount too small, attempting to transfer entire balance');
       amountToTransfer = balance;
     }
 
@@ -361,6 +366,10 @@ async function attemptTransferToHotWallet(telegramId, address) {
     let seqno;
     try {
       seqno = await wallet.methods.seqno().call();
+      if (typeof seqno !== 'number' || seqno < 0) {
+        console.log('Invalid seqno, using 0');
+        seqno = 0;
+      }
     } catch (seqnoError) {
       console.log('Error getting seqno, wallet might be uninitialized. Using 0 as seqno.');
       seqno = 0;
@@ -380,13 +389,27 @@ async function attemptTransferToHotWallet(telegramId, address) {
       const transferResult = await transfer.send();
       console.log('Transfer result:', transferResult);
 
+      // Проверка статуса транзакции
+      const transactionStatus = await checkTransactionStatus(transferResult.hash);
+      console.log('Transaction status:', transactionStatus);
+
       if (telegramId) {
         await database.ref(`users/${telegramId}/wallet/lastTransfer`).set({
           timestamp: Date.now(),
-          status: 'completed',
+          status: transactionStatus,
           result: transferResult,
           amount: amountToTransfer.toString()
         });
+      }
+
+      if (transactionStatus === 'confirmed') {
+        console.log('Transfer confirmed successfully');
+        return transferResult;
+      } else if (transactionStatus === 'pending') {
+        console.log('Transfer is pending, please check later');
+        return { status: 'pending', hash: transferResult.hash };
+      } else {
+        throw new Error(`Transfer failed with status: ${transactionStatus}`);
       }
     } catch (transferError) {
       console.error('Error transferring from deposit wallet to hot wallet:', transferError);
@@ -396,6 +419,14 @@ async function attemptTransferToHotWallet(telegramId, address) {
           status: 'failed',
           error: transferError.message
         });
+      }
+      if (transferError.message && transferError.message.includes('duplicate message')) {
+        console.log('Transaction might have been already sent, checking status...');
+        const existingTransactionStatus = await checkTransactionStatus(address);
+        if (existingTransactionStatus === 'confirmed') {
+          console.log('Previously sent transaction was confirmed');
+          return { status: 'confirmed', message: 'Transaction was already processed' };
+        }
       }
       throw transferError;
     }
@@ -480,18 +511,20 @@ function verifyTelegramData(telegramData) {
 }
 
 app.post('/attemptTransferToHotWallet', async (req, res) => {
+  console.log('Received POST request to /attemptTransferToHotWallet');
+  console.log('Request body:', req.body);
   const { telegramId, address } = req.body;
   
   if (!telegramId || !address) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+    return res.status(400).json({ error: 'Missing required parameters' });
   }
 
   try {
-      await attemptTransferToHotWallet(telegramId, address);
-      res.json({ success: true, message: 'Transfer to hot wallet initiated' });
+    await attemptTransferToHotWallet(telegramId, address);
+    res.json({ success: true, message: 'Transfer to hot wallet initiated' });
   } catch (error) {
-      console.error('Error in /attemptTransferToHotWallet:', error);
-      res.status(500).json({ error: 'Internal server error', details: error.message });
+    console.error('Error in /attemptTransferToHotWallet:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
