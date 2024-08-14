@@ -6,7 +6,7 @@ const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
 const { Telegraf, Markup } = require('telegraf');
 const TonWeb = require('tonweb');
-const { tonweb, createWallet, generateKeyPair, IS_TESTNET, TONCENTER_API_KEY, INDEX_API_URL, NODE_API_URL } = require('./common.js');
+const { tonweb, createWallet, createKeyPair, IS_TESTNET, TONCENTER_API_KEY, INDEX_API_URL, NODE_API_URL } = require('./common.js');
 const BlockSubscriptionIndex = require('./block/BlockSubscriptionIndex');
 const BN = TonWeb.utils.BN;
 const { Cell, Transaction } = TonWeb.boc;
@@ -73,7 +73,7 @@ app.get('/getTonWebConfig', (req, res) => {
 async function generateDepositAddress(telegramId) {
   console.log('Generating deposit address for Telegram ID:', telegramId);
   try {
-    const keyPair = await generateKeyPair();
+    const keyPair = await createKeyPair();
     console.log('Key pair generated');
     const { wallet, address } = await createWallet(keyPair);
     console.log('Wallet created, address:', address);
@@ -123,10 +123,29 @@ app.get('/getDepositAddress', async (req, res) => {
 });
 
 app.get('/checkTransactionStatus', async (req, res) => {
-  const { uniqueId, telegramId, ticketAmount } = req.query;
+  const { uniqueId, telegramId, ticketAmount, transactionHash } = req.query;
   
   try {
+    // Сначала проверяем статус транзакции через существующую логику
     const status = await checkTransactionStatus(uniqueId, telegramId, ticketAmount);
+    
+    // Если статус не подтвержден, проверяем через Toncenter
+    if (status.status !== 'confirmed' && transactionHash) {
+      const toncenterResponse = await fetch(`https://toncenter.com/api/v2/transactions/${transactionHash}`, {
+        headers: {
+          'X-API-Key': TONCENTER_API_KEY
+        }
+      });
+      
+      if (toncenterResponse.ok) {
+        const toncenterData = await toncenterResponse.json();
+        if (toncenterData.result && toncenterData.result.status === 'confirmed') {
+          status.status = 'confirmed';
+        }
+      } else {
+        console.error(`Ошибка Toncenter: ${toncenterResponse.status} ${toncenterResponse.statusText}`);
+      }
+    }
     
     if (status.status === 'confirmed') {
       // Если транзакция подтверждена, попытаемся перевести средства на горячий кошелек
