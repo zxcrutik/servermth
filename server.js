@@ -122,6 +122,31 @@ app.get('/getDepositAddress', async (req, res) => {
   }
 });
 
+app.get('/checkTransactionStatus', async (req, res) => {
+  const { uniqueId, telegramId, ticketAmount } = req.query;
+  
+  try {
+    const status = await checkTransactionStatus(uniqueId, telegramId, ticketAmount);
+    
+    if (status.status === 'confirmed') {
+      // Если транзакция подтверждена, попытаемся перевести средства на горячий кошелек
+      const transferResult = await attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount);
+      
+      if (transferResult.status === 'success') {
+        // Если перевод успешен, обновляем баланс билетов
+        await updateTicketBalance(telegramId, ticketAmount, uniqueId);
+      }
+      
+      status.transferStatus = transferResult.status;
+    }
+    
+    res.json(status);
+  } catch (error) {
+    console.error('Ошибка при проверке статуса транзакции:', error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
 // Эндпоинт для проверки статуса транзакции
 app.get('/checkTransaction', async (req, res) => {
   const { telegramId, uniqueId, amount, price } = req.query;
