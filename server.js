@@ -113,8 +113,18 @@ app.get('/getDepositAddress', async (req, res) => {
       return res.json({ address: userData.wallet.address });
     }
 
+    console.log('No existing address found, generating new one...');
     const address = await generateDepositAddress(telegramId);
     console.log('New deposit address generated:', address);
+
+    // Сохраняем новый адрес в базу данных
+    await userRef.update({
+      wallet: {
+        address: address
+      }
+    });
+    console.log('New address saved to database');
+
     res.json({ address });
   } catch (error) {
     console.error('Error in /getDepositAddress:', error);
