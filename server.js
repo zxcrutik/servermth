@@ -73,7 +73,7 @@ app.get('/getTonWebConfig', (req, res) => {
 async function generateDepositAddress(telegramId) {
   console.log('Generating deposit address for Telegram ID:', telegramId);
   try {
-    const keyPair = await createKeyPair();
+    const keyPair = await generateKeyPair();
     console.log('Key pair generated');
     const { wallet, address } = await createWallet(keyPair);
     console.log('Wallet created, address:', address);
