@@ -208,9 +208,6 @@ async function verifyTransaction(uniqueId, telegramId, ticketAmount, transaction
 
   await delay(initialDelay);
 
-  let transferAttempted = false;
-  let ticketsUpdated = false;
-
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       // Проверяем, была ли транзакция уже обработана
@@ -239,49 +236,11 @@ async function verifyTransaction(uniqueId, telegramId, ticketAmount, transaction
 
       if (isConfirmedViaToncenter || isConfirmedExternally) {
         await markTransactionAsProcessed(uniqueId);
-
-        if (!transferAttempted) {
-          transferAttempted = true;
-          const transferResult = await attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount);
-          console.log('Результат попытки перевода на горячий кошелек:', transferResult);
-        }
-
-        if (!ticketsUpdated) {
-          try {
-            const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount, 10), uniqueId);
-            if (newBalance === undefined) {
-              throw new Error('Не удалось обновить баланс билетов');
-            }
-            ticketsUpdated = true;
-            console.log(`Баланс билетов обновлен. Новый баланс: ${newBalance}`);
-            return {
-              isConfirmed: true,
-              status: 'confirmed',
-              message: 'Транзакция подтверждена, билеты обновлены',
-              newBalance: newBalance,
-              transferStatus: transferAttempted ? 'attempted' : 'not_attempted',
-              ticketsUpdated: true
-            };
-          } catch (error) {
-            console.error('Ошибка при обновлении баланса билетов:', error);
-            return {
-              isConfirmed: true,
-              status: 'confirmed',
-              message: 'Транзакция подтверждена, но возникла ошибка при обновлении билетов',
-              transferStatus: transferAttempted ? 'attempted' : 'not_attempted',
-              ticketsUpdated: false,
-              error: error.message
-            };
-          }
-        }
-        
-        // Если билеты уже обновлены, прекращаем проверку
         return {
           isConfirmed: true,
           status: 'confirmed',
-          message: 'Транзакция подтверждена, билеты уже обновлены',
-          transferStatus: transferAttempted ? 'attempted' : 'not_attempted',
-          ticketsUpdated: true
+          message: 'Транзакция подтверждена',
+          transactionHash: transactionHash
         };
       } else {
         console.log('Транзакция все еще в обработке');
@@ -299,9 +258,7 @@ async function verifyTransaction(uniqueId, telegramId, ticketAmount, transaction
   return {
     isConfirmed: false,
     status: 'pending',
-    message: 'Транзакция не подтверждена после нескольких попыток',
-    transferStatus: transferAttempted ? 'attempted' : 'not_attempted',
-    ticketsUpdated: ticketsUpdated
+    message: 'Транзакция не подтверждена после нескольких попыток'
   };
 }
 
@@ -340,32 +297,6 @@ app.get('/getDepositAddress', async (req, res) => {
   } catch (error) {
     console.error('Error in /getDepositAddress:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
-  }
-});
-
-app.get('/checkTransactionStatus', async (req, res) => {
-  const { uniqueId, telegramId, ticketAmount, transactionHash } = req.query;
-  
-  try {
-    const verificationResult = await verifyTransaction(uniqueId, telegramId, ticketAmount, transactionHash);
-    
-    if (verificationResult.isConfirmed) {
-      const transferResult = await attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount);
-      
-      if (transferResult.status === 'success') {
-        await updateTicketBalance(telegramId, ticketAmount, uniqueId);
-        verificationResult.ticketsUpdated = true;
-      } else {
-        verificationResult.ticketsUpdated = false;
-      }
-      
-      verificationResult.transferStatus = transferResult.status;
-    }
-    
-    res.json(verificationResult);
-  } catch (error) {
-    console.error('Ошибка при проверке статуса транзакции:', error);
-    res.status(500).json({ status: 'error', message: error.message });
   }
 });
 
@@ -546,22 +477,11 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
     // Обновляем информацию о последнем переводе в базе данных
     await updateUserTransferStatus(telegramId, 'pending', { uniqueId }, amountToTransfer.toString());
 
-    // Запускаем процесс проверки статуса транзакции
-    const transferStatus = await checkTransferStatus(uniqueId, telegramId, ticketAmount, amountToTransfer);
-    console.log('Результат проверки статуса перевода:', transferStatus);
-
-    if (transferStatus.status === 'success') {
-      return { 
-        status: 'success', 
-        message: 'Перевод подтвержден, билеты начислены', 
-        newBalance: transferStatus.newBalance 
-      };
-    } else {
-      return { 
-        status: transferStatus.status, 
-        message: 'Перевод инициирован, ожидается подтверждение' 
-      };
-    }
+    // Возвращаем статус 'initiated', так как проверка будет выполнена отдельно
+    return { 
+      status: 'initiated', 
+      message: 'Перевод инициирован, ожидается подтверждение' 
+    };
   } catch (error) {
     console.error('Ошибка в attemptTransferToHotWallet:', error);
     await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, null, error.message);
@@ -584,59 +504,6 @@ async function updateUserTransferStatus(telegramId, status, result, amount, erro
 
     await database.ref(`users/${telegramId}/wallet/lastTransfer`).set(updateData);
   }
-}
-
-async function checkTransferStatus(uniqueId, telegramId, ticketAmount, amount) {
-  const maxAttempts = 10;
-  const delay = 30000; // 30 секунд
-
-  for (let attempts = 1; attempts <= maxAttempts; attempts++) {
-    console.log(`Проверка статуса транзакции ${uniqueId}, попытка ${attempts}`);
-
-    try {
-      const transactionInfo = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 1);
-      const tx = transactionInfo.find(tx => tx.in_msg && tx.in_msg.message === `Transfer:${uniqueId}`);
-
-      if (tx) {
-        console.log(`Найдена транзакция для ${uniqueId}. Статус:`, tx.status);
-        
-        if (tx.status === 3) { // Успешная транзакция
-          await updateUserTransferStatus(telegramId, 'confirmed', { uniqueId }, amount);
-          console.log(`Транзакция ${uniqueId} подтверждена`);
-          
-          // Обновляем баланс билетов
-          const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount), uniqueId);
-          console.log(`Баланс билетов обновлен. Новый баланс: ${newBalance}`);
-          
-          return { status: 'success', ticketsUpdated: true, newBalance };
-        } else {
-          console.log(`Транзакция ${uniqueId} найдена, но еще не подтверждена. Статус: ${tx.status}`);
-        }
-      } else {
-        console.log(`Транзакция ${uniqueId} не найдена в этой попытке`);
-      }
-
-      if (attempts < maxAttempts) {
-        console.log(`Ожидание ${delay / 1000} секунд перед следующей попыткой...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      } else {
-        console.log(`Достигнуто максимальное количество попыток для транзакции ${uniqueId}`);
-        await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, amount, 'Превышено время ожидания подтверждения');
-        return { status: 'failed', ticketsUpdated: false };
-      }
-    } catch (error) {
-      console.error(`Ошибка при проверке статуса транзакции ${uniqueId}:`, error);
-      if (attempts === maxAttempts) {
-        await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, amount, error.message);
-        return { status: 'error', ticketsUpdated: false };
-      }
-      console.log(`Ожидание ${delay / 1000} секунд перед следующей попыткой из-за ошибки...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-
-  // Если цикл завершился без возврата, возвращаем статус 'pending'
-  return { status: 'pending', ticketsUpdated: false };
 }
 
 async function updateTicketBalance(telegramId, ticketAmount, uniqueId) {
@@ -711,28 +578,100 @@ async function updateUserTransferStatus(telegramId, status, result, amount, erro
 app.get('/checkTransactionStatus', async (req, res) => {
   const { uniqueId, telegramId, ticketAmount, transactionHash } = req.query;
   
+  console.log(`Запрос проверки статуса транзакции. TelegramId: ${telegramId}, UniqueId: ${uniqueId}, Количество билетов: ${ticketAmount}`);
+
   try {
-    const status = await verifyTransaction(uniqueId, telegramId, ticketAmount, transactionHash);
-    
-    if (status.isConfirmed) {
-      const transferResult = await attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount);
-      
-      if (transferResult.status === 'success') {
-        await updateTicketBalance(telegramId, ticketAmount, uniqueId);
-        status.ticketsUpdated = true;
-      } else {
-        status.ticketsUpdated = false;
-      }
-      
-      status.transferStatus = transferResult.status;
-    }
-    
+    const status = await checkTransactionAndTransferStatus(uniqueId, telegramId, ticketAmount, transactionHash);
     res.json(status);
   } catch (error) {
     console.error('Ошибка при проверке статуса транзакции:', error);
     res.status(500).json({ status: 'error', message: error.message });
   }
 });
+
+async function checkTransactionAndTransferStatus(uniqueId, telegramId, ticketAmount, transactionHash) {
+  const maxAttempts = 10;
+  const delay = 30000; // 30 секунд
+
+  // Сначала проверяем статус исходной транзакции
+  const transactionStatus = await verifyTransaction(uniqueId, telegramId, ticketAmount, transactionHash);
+  
+  if (!transactionStatus.isConfirmed) {
+    return transactionStatus;
+  }
+
+  // Если транзакция подтверждена, инициируем перевод на горячий кошелек
+  const transferResult = await attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount);
+  if (transferResult.status !== 'initiated') {
+    return transferResult; // Возвращаем результат, если произошла ошибка или перевод уже был инициирован
+  }
+
+  // Проверяем статус перевода на горячий кошелек
+  for (let attempts = 1; attempts <= maxAttempts; attempts++) {
+    console.log(`Проверка статуса перевода ${uniqueId}, попытка ${attempts}`);
+
+    try {
+      const transactionInfo = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 1);
+      const tx = transactionInfo.find(tx => tx.in_msg && tx.in_msg.message === `Transfer:${uniqueId}`);
+
+      if (tx) {
+        console.log(`Найдена транзакция для ${uniqueId}. Статус:`, tx.status);
+        
+        if (tx.status === 3) { // Успешная транзакция
+          await updateUserTransferStatus(telegramId, 'confirmed', { uniqueId }, tx.in_msg.value);
+          console.log(`Транзакция ${uniqueId} подтверждена`);
+          
+          // Обновляем баланс билетов
+          const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount), uniqueId);
+          console.log(`Баланс билетов обновлен. Новый баланс: ${newBalance}`);
+          
+          return { 
+            status: 'success', 
+            message: 'Транзакция подтверждена, перевод выполнен, билеты начислены',
+            ticketsUpdated: true, 
+            newBalance 
+          };
+        } else {
+          console.log(`Транзакция ${uniqueId} найдена, но еще не подтверждена. Статус: ${tx.status}`);
+        }
+      } else {
+        console.log(`Транзакция ${uniqueId} не найдена в этой попытке`);
+      }
+
+      if (attempts < maxAttempts) {
+        console.log(`Ожидание ${delay / 1000} секунд перед следующей попыткой...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        console.log(`Достигнуто максимальное количество попыток для транзакции ${uniqueId}`);
+        await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, null, 'Превышено время ожидания подтверждения');
+        return { 
+          status: 'failed', 
+          message: 'Транзакция подтверждена, но возникли проблемы с переводом',
+          ticketsUpdated: false 
+        };
+      }
+    } catch (error) {
+      console.error(`Ошибка при проверке статуса транзакции ${uniqueId}:`, error);
+      if (attempts === maxAttempts) {
+        await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, null, error.message);
+        return { 
+          status: 'error', 
+          message: 'Произошла ошибка при проверке статуса перевода',
+          ticketsUpdated: false 
+        };
+      }
+      console.log(`Ожидание ${delay / 1000} секунд перед следующей попыткой из-за ошибки...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  // Если цикл завершился без возврата, возвращаем статус 'pending'
+  return { 
+    status: 'pending', 
+    message: 'Транзакция подтверждена, ожидается завершение перевода',
+    ticketsUpdated: false 
+  };
+}
 
 const depositAddressCache = new Set();
 
