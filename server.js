@@ -546,9 +546,21 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
     await updateUserTransferStatus(telegramId, 'pending', { uniqueId }, amountToTransfer.toString());
 
     // Запускаем процесс проверки статуса транзакции
-    await checkTransferStatus(uniqueId, telegramId, ticketAmount, amountToTransfer);
+    const transferStatus = await checkTransferStatus(uniqueId, telegramId, ticketAmount, amountToTransfer);
+    console.log('Результат проверки статуса перевода:', transferStatus);
 
-    return { status: 'success', message: 'Перевод инициирован, ожидается подтверждение' };
+    if (transferStatus.status === 'success') {
+      return { 
+        status: 'success', 
+        message: 'Перевод подтвержден, билеты начислены', 
+        newBalance: transferStatus.newBalance 
+      };
+    } else {
+      return { 
+        status: transferStatus.status, 
+        message: 'Перевод инициирован, ожидается подтверждение' 
+      };
+    }
   } catch (error) {
     console.error('Ошибка в attemptTransferToHotWallet:', error);
     await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, null, error.message);
@@ -584,17 +596,27 @@ async function checkTransferStatus(uniqueId, telegramId, ticketAmount, amount) {
       const transactionInfo = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 1);
       const tx = transactionInfo.find(tx => tx.in_msg && tx.in_msg.message === `Transfer:${uniqueId}`);
 
-      if (tx && tx.status === 3) { // Успешная транзакция
-        await updateUserTransferStatus(telegramId, 'confirmed', { uniqueId }, amount);
-        console.log(`Транзакция ${uniqueId} подтверждена`);
+      if (tx) {
+        console.log(`Найдена транзакция для ${uniqueId}. Статус:`, tx.status);
         
-        // Обновляем баланс билетов
-        const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount), uniqueId);
-        
-        return { status: 'success', ticketsUpdated: true, newBalance };
+        if (tx.status === 3) { // Успешная транзакция
+          await updateUserTransferStatus(telegramId, 'confirmed', { uniqueId }, amount);
+          console.log(`Транзакция ${uniqueId} подтверждена`);
+          
+          // Обновляем баланс билетов
+          const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount), uniqueId);
+          console.log(`Баланс билетов обновлен. Новый баланс: ${newBalance}`);
+          
+          return { status: 'success', ticketsUpdated: true, newBalance };
+        } else {
+          console.log(`Транзакция ${uniqueId} найдена, но еще не подтверждена. Статус: ${tx.status}`);
+        }
+      } else {
+        console.log(`Транзакция ${uniqueId} не найдена в этой попытке`);
       }
 
       if (attempts < maxAttempts) {
+        console.log(`Ожидание ${delay / 1000} секунд перед следующей попыткой...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       } else {
         console.log(`Достигнуто максимальное количество попыток для транзакции ${uniqueId}`);
@@ -607,9 +629,13 @@ async function checkTransferStatus(uniqueId, telegramId, ticketAmount, amount) {
         await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, amount, error.message);
         return { status: 'error', ticketsUpdated: false };
       }
+      console.log(`Ожидание ${delay / 1000} секунд перед следующей попыткой из-за ошибки...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
+
+  // Если цикл завершился без возврата, возвращаем статус 'pending'
+  return { status: 'pending', ticketsUpdated: false };
 }
 
 async function updateTicketBalance(telegramId, ticketAmount, uniqueId) {
@@ -630,10 +656,20 @@ async function updateTicketBalance(telegramId, ticketAmount, uniqueId) {
     
     await userRef.update({
       ticketBalance: newBalance,
-      lastProcessedUniqueId: uniqueId
+      lastProcessedUniqueId: uniqueId,
+      lastUpdated: Date.now()
     });
 
     console.log(`Баланс билетов обновлен. Новый баланс: ${newBalance}`);
+    
+    // Добавляем запись в историю транзакций
+    await userRef.child('transactions').push({
+      type: 'ticket_purchase',
+      amount: ticketAmount,
+      uniqueId: uniqueId,
+      timestamp: Date.now()
+    });
+
     return newBalance;
   } catch (error) {
     console.error('Ошибка при обновлении баланса билетов:', error);
