@@ -392,6 +392,13 @@ const transferAttempts = new Set();
 async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
   console.log(`Попытка перевода на горячий кошелек. Telegram ID: ${telegramId}, Unique ID: ${uniqueId}, Ticket Amount: ${ticketAmount}`);
 
+  // Проверяем статус перевода перед попыткой инициировать новый перевод
+  const transferStatus = await getTransferStatus(uniqueId, telegramId);
+  if (transferStatus === 'success' || transferStatus === 'confirmed') {
+    console.log(`Перевод для транзакции ${uniqueId} уже был успешно выполнен.`);
+    return { status: 'success', message: 'Перевод уже был успешно выполнен' };
+  }
+
   // Проверяем, была ли уже попытка перевода для этой транзакции
   if (transferAttempts.has(uniqueId)) {
     console.log(`Перевод для транзакции ${uniqueId} уже был инициирован ранее.`);
@@ -481,6 +488,14 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
     // Удаляем uniqueId из множества попыток, чтобы разрешить будущие попытки, если это необходимо
     transferAttempts.delete(uniqueId);
   }
+}
+
+// Функция для получения статуса перевода
+async function getTransferStatus(uniqueId, telegramId) {
+  const userRef = database.ref(`users/${telegramId}/transactions/${uniqueId}`);
+  const snapshot = await userRef.once('value');
+  const transactionData = snapshot.val();
+  return transactionData ? transactionData.status : null;
 }
 
 async function updateUserTransferStatus(telegramId, status, result, amount, errorMessage = null) {
