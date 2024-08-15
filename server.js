@@ -545,9 +545,6 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
     // Обновляем информацию о последнем переводе в базе данных
     await updateUserTransferStatus(telegramId, 'pending', { uniqueId }, amountToTransfer.toString());
 
-    // Обновляем статус транзакции в базе данных
-    await updateTransactionStatus(uniqueId, 'pending');
-
     // Запускаем процесс проверки статуса транзакции
     await checkTransferStatus(uniqueId, telegramId, ticketAmount, amountToTransfer);
 
@@ -577,59 +574,51 @@ async function updateUserTransferStatus(telegramId, status, result, amount, erro
 }
 
 async function checkTransferStatus(uniqueId, telegramId, ticketAmount, amount) {
-  let attempts = 0;
   const maxAttempts = 10;
   const delay = 30000; // 30 секунд
 
-  const checkStatus = async () => {
-    attempts++;
+  for (let attempts = 1; attempts <= maxAttempts; attempts++) {
     console.log(`Проверка статуса транзакции ${uniqueId}, попытка ${attempts}`);
 
     try {
       const transactionInfo = await tonweb.provider.getTransactions(MY_HOT_WALLET_ADDRESS, 1);
       const tx = transactionInfo.find(tx => tx.in_msg && tx.in_msg.message === `Transfer:${uniqueId}`);
 
-      if (tx) {
-        if (tx.status === 3) { // Успешная транзакция
-          await updateTransactionStatus(uniqueId, 'confirmed');
-          await updateUserTransferStatus(telegramId, 'confirmed', { uniqueId }, amount);
-          console.log(`Транзакция ${uniqueId} подтверждена`);
-          
-          // Обновляем баланс билетов
-          await updateTicketBalance(telegramId, parseInt(ticketAmount), uniqueId);
-          
-          return { status: 'success', ticketsUpdated: true };
-        }
+      if (tx && tx.status === 3) { // Успешная транзакция
+        await updateUserTransferStatus(telegramId, 'confirmed', { uniqueId }, amount);
+        console.log(`Транзакция ${uniqueId} подтверждена`);
+        
+        // Обновляем баланс билетов
+        const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount), uniqueId);
+        
+        return { status: 'success', ticketsUpdated: true, newBalance };
       }
 
       if (attempts < maxAttempts) {
-        setTimeout(checkStatus, delay);
+        await new Promise(resolve => setTimeout(resolve, delay));
       } else {
         console.log(`Достигнуто максимальное количество попыток для транзакции ${uniqueId}`);
-        await updateTransactionStatus(uniqueId, 'failed');
         await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, amount, 'Превышено время ожидания подтверждения');
         return { status: 'failed', ticketsUpdated: false };
       }
     } catch (error) {
       console.error(`Ошибка при проверке статуса транзакции ${uniqueId}:`, error);
-      if (attempts < maxAttempts) {
-        setTimeout(checkStatus, delay);
-      } else {
-        await updateTransactionStatus(uniqueId, 'failed');
+      if (attempts === maxAttempts) {
         await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, amount, error.message);
         return { status: 'error', ticketsUpdated: false };
       }
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
-  };
-
-  return checkStatus();
+  }
 }
 
 async function updateTicketBalance(telegramId, ticketAmount, uniqueId) {
+  console.log(`Обновление баланса билетов. Telegram ID: ${telegramId}, Ticket Amount: ${ticketAmount}, Unique ID: ${uniqueId}`);
   const userRef = database.ref(`users/${telegramId}`);
-  return await database.runTransaction(async (transaction) => {
-    const userSnapshot = await transaction.get(userRef);
-    const userData = userSnapshot.val() || {};
+  
+  try {
+    const snapshot = await userRef.once('value');
+    const userData = snapshot.val() || {};
     
     if (userData.lastProcessedUniqueId === uniqueId) {
       console.log(`Транзакция ${uniqueId} уже обработана, пропускаем обновление баланса`);
@@ -639,14 +628,17 @@ async function updateTicketBalance(telegramId, ticketAmount, uniqueId) {
     const currentBalance = userData.ticketBalance || 0;
     const newBalance = currentBalance + parseInt(ticketAmount, 10);
     
-    transaction.update(userRef, {
+    await userRef.update({
       ticketBalance: newBalance,
       lastProcessedUniqueId: uniqueId
     });
 
     console.log(`Баланс билетов обновлен. Новый баланс: ${newBalance}`);
     return newBalance;
-  });
+  } catch (error) {
+    console.error('Ошибка при обновлении баланса билетов:', error);
+    throw error;
+  }
 }
 
 async function getSeqno(wallet) {
@@ -660,6 +652,7 @@ async function getSeqno(wallet) {
 }
 
 async function updateUserTransferStatus(telegramId, status, result, amount, errorMessage = null) {
+  console.log(`Обновление статуса перевода. Telegram ID: ${telegramId}, Status: ${status}`);
   if (telegramId) {
     const updateData = {
       timestamp: Date.now(),
@@ -669,7 +662,12 @@ async function updateUserTransferStatus(telegramId, status, result, amount, erro
     if (amount) updateData.amount = amount.toString();
     if (errorMessage) updateData.error = errorMessage;
 
-    await database.ref(`users/${telegramId}/wallet/lastTransfer`).set(updateData);
+    try {
+      await database.ref(`users/${telegramId}/wallet/lastTransfer`).set(updateData);
+      console.log('Статус перевода успешно обновлен');
+    } catch (error) {
+      console.error('Ошибка при обновлении статуса перевода:', error);
+    }
   }
 }
 
