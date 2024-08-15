@@ -869,7 +869,7 @@ async function updateMiniGameEntryPrice(telegramId) {
   }
 
   // Проверяем, нужно ли обновить цену
-  if (currentTime - userData.lastPriceUpdateTime >= 25000) {
+  if (currentTime - userData.lastPriceUpdateTime >= 24 * 60 * 60 * 1000) {
     const newPrice = Math.floor(Math.random() * 9) + 2; // Случайное число от 2 до 10
     await userRef.update({
       miniGameEntryPrice: newPrice,
