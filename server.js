@@ -21,13 +21,14 @@ app.use(bodyParser.json());
 // В начале файла, после создания приложения express
 // Применяйте CORS ко всем маршрутам
 app.use(cors({
-  origin: '*', // Разрешаем все источники
+  origin: 'https://method-e6c6c.web.app', // Укажите точный домен вашего клиента
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
   preflightContinue: false,
   optionsSuccessStatus: 204
 }));
+app.options('*', cors()); // Обработка предварительных запросов для всех маршрутов
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
 admin.initializeApp({
