@@ -21,7 +21,7 @@ app.use(bodyParser.json());
 // В начале файла, после создания приложения express
 // Применяйте CORS ко всем маршрутам
 app.use(cors({
-  origin: '*', // Временно разрешите все источники для отладки
+  origin: '*', // Разрешаем все источники
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
