@@ -162,25 +162,6 @@ async function verifyTransaction(uniqueId, telegramId, ticketAmount, transaction
     }
   }
 
-  async function checkTransactionViaToncenter(transactionHash) {
-    try {
-      const response = await fetch(`https://toncenter.com/api/v2/transactions/${transactionHash}`, {
-        headers: { 'X-API-Key': TONCENTER_API_KEY }
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
-      console.log('Ответ от Toncenter:', data);
-      const isConfirmed = data.result && data.result.status === 'confirmed';
-      console.log('Результат проверки через Toncenter:', isConfirmed);
-      return isConfirmed;
-    } catch (error) {
-      console.error('Ошибка при проверке через Toncenter:', error);
-      return false;
-    }
-  }
-
   async function checkTransactionExternally(transactionHash) {
     try {
       if (!transactionHash) {
@@ -229,12 +210,11 @@ async function verifyTransaction(uniqueId, telegramId, ticketAmount, transaction
         }
       }
 
-      const isConfirmedViaToncenter = await checkTransactionViaToncenter(transactionHash);
       const isConfirmedExternally = await checkTransactionExternally(transactionHash);
 
-      console.log(`Результаты проверок: Toncenter: ${isConfirmedViaToncenter}, Внешне: ${isConfirmedExternally}`);
+      console.log(`Результат внешней проверки: ${isConfirmedExternally}`);
 
-      if (isConfirmedViaToncenter || isConfirmedExternally) {
+      if (isConfirmedExternally) {
         await markTransactionAsProcessed(uniqueId);
         return {
           isConfirmed: true,
@@ -474,14 +454,25 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
     const transferResult = await transfer.send();
     console.log('Результат перевода:', transferResult);
 
-    // Обновляем информацию о последнем переводе в базе данных
-    await updateUserTransferStatus(telegramId, 'pending', { uniqueId }, amountToTransfer.toString());
-
-    // Возвращаем статус 'initiated', так как проверка будет выполнена отдельно
-    return { 
-      status: 'initiated', 
-      message: 'Перевод инициирован, ожидается подтверждение' 
-    };
+    if (transferResult['@type'] === 'ok') {
+      await updateUserTransferStatus(telegramId, 'success', { uniqueId }, amountToTransfer.toString());
+      
+      // Обновляем баланс билетов пользователя
+      const newBalance = await updateTicketBalance(telegramId, parseInt(ticketAmount), uniqueId);
+      
+      return { 
+        status: 'success', 
+        message: 'Перевод успешно выполнен и билеты начислены',
+        newBalance: newBalance
+      };
+    } else {
+      await updateUserTransferStatus(telegramId, 'pending', { uniqueId }, amountToTransfer.toString());
+      return { 
+        status: 'pending', 
+        message: 'Перевод инициирован, ожидается подтверждение',
+        transactionId: transferResult.transaction_id
+      };
+    }
   } catch (error) {
     console.error('Ошибка в attemptTransferToHotWallet:', error);
     await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, null, error.message);
@@ -602,8 +593,25 @@ async function checkTransactionAndTransferStatus(uniqueId, telegramId, ticketAmo
 
   // Если транзакция подтверждена, инициируем перевод на горячий кошелек
   const transferResult = await attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount);
-  if (transferResult.status !== 'initiated') {
-    return transferResult; // Возвращаем результат, если произошла ошибка или перевод уже был инициирован
+  
+  if (transferResult.status === 'success') {
+    return { 
+      status: 'success', 
+      message: transferResult.message,
+      ticketsUpdated: true, 
+      newBalance: transferResult.newBalance 
+    };
+  } else if (transferResult.status === 'error' || transferResult.status === 'insufficient_balance') {
+    return {
+      status: transferResult.status,
+      message: transferResult.message,
+      ticketsUpdated: false
+    };
+  } else if (transferResult.status === 'already_attempted') {
+    // Если перевод уже был инициирован ранее, проверяем его статус
+    console.log(`Перевод для ${uniqueId} уже был инициирован ранее, проверяем статус`);
+  } else if (transferResult.status !== 'pending') {
+    return transferResult; // Возвращаем результат для других неожиданных статусов
   }
 
   // Проверяем статус перевода на горячий кошелек
