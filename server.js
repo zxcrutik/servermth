@@ -867,7 +867,7 @@ async function updateMiniGameEntryPrice(telegramId) {
     console.log(`Created mini game entry price for new user ${telegramId}: ${newPrice} tickets`);
     return newPrice;
   }
-
+//
   // Проверяем, нужно ли обновить цену
   if (currentTime - userData.lastPriceUpdateTime >= 24 * 60 * 60 * 1000) {
     const newPrice = Math.floor(Math.random() * 9) + 2; // Случайное число от 2 до 10
