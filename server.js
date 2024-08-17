@@ -18,10 +18,9 @@ const { Cell, Transaction } = TonWeb.boc;
 const app = express();
 app.set('trust proxy', 1);
 app.use(bodyParser.json());
-// В начале файла, после создания приложения express
-// Применяйте CORS ко всем маршрутам
+
 app.use(cors({
-  origin: 'https://method-e6c6c.web.app', // Укажите точный домен вашего клиента
+  origin: 'https://method-e6c6c.web.app', 
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
@@ -485,7 +484,7 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
     await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, null, error.message);
     return { status: 'error', message: error.message };
   } finally {
-    // Удаляем uniqueId из множества попыток, чтобы разрешить будущие попытки, если это необходимо
+
     transferAttempts.delete(uniqueId);
   }
 }
@@ -730,7 +729,6 @@ async function onTransaction(tx) {
     console.error('Error processing transaction:', error);
   }
 }
-// Добавьте эту функцию в конец файла
 async function initBlockSubscription() {
   const masterchainInfo = await tonweb.provider.getMasterchainInfo();
   const lastMasterchainBlockNumber = masterchainInfo.last.seqno;
@@ -740,7 +738,6 @@ async function initBlockSubscription() {
   await blockSubscription.start();
 }
 
-// Добавьте эту строку в конец файла, после всех остальных инициализаций
 initBlockSubscription().catch(console.error);
 
 // Функция защиты
@@ -859,7 +856,7 @@ async function updateMiniGameEntryPrice(telegramId) {
 
   // Проверяем, существует ли запись пользователя
   if (!userData || !userData.miniGameEntryPrice || !userData.lastPriceUpdateTime) {
-    const newPrice = Math.floor(Math.random() * 9) + 2; // Случайное число от 2 до 10
+    const newPrice = Math.floor(Math.random() * 4) + 2; // Случайное число от 2 до 5
     await userRef.update({
       miniGameEntryPrice: newPrice,
       lastPriceUpdateTime: currentTime
@@ -870,7 +867,7 @@ async function updateMiniGameEntryPrice(telegramId) {
 //
   // Проверяем, нужно ли обновить цену
   if (currentTime - userData.lastPriceUpdateTime >= 24 * 60 * 60 * 1000) {
-    const newPrice = Math.floor(Math.random() * 9) + 2; // Случайное число от 2 до 10
+    const newPrice = Math.floor(Math.random() * 4) + 2; // Случайное число от 2 до 5
     await userRef.update({
       miniGameEntryPrice: newPrice,
       lastPriceUpdateTime: currentTime
