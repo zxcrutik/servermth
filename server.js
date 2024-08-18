@@ -879,7 +879,6 @@ async function updateMiniGameEntryPrice(telegramId) {
   return userData.miniGameEntryPrice;
 }
 
-// Маршрут для получения цены входа в мини-игру
 app.get('/getMiniGameEntryPrice', async (req, res) => {
   const { telegramId } = req.query;
   if (!telegramId) {
@@ -887,8 +886,28 @@ app.get('/getMiniGameEntryPrice', async (req, res) => {
   }
 
   try {
-    const price = await updateMiniGameEntryPrice(telegramId);
-    res.json({ price });
+    const userRef = database.ref(`users/${telegramId}`);
+    const snapshot = await userRef.once('value');
+    const userData = snapshot.val();
+
+    const currentTime = Date.now();
+    let price, lastPriceUpdateTime;
+
+    if (!userData || !userData.miniGameEntryPrice || !userData.lastPriceUpdateTime || 
+        (currentTime - userData.lastPriceUpdateTime >= 24 * 60 * 60 * 1000)) {
+      price = Math.floor(Math.random() * 4) + 2; // Случайное число от 2 до 5
+      lastPriceUpdateTime = currentTime;
+      await userRef.update({
+        miniGameEntryPrice: price,
+        lastPriceUpdateTime: lastPriceUpdateTime
+      });
+      console.log(`Updated mini game entry price for user ${telegramId}: ${price} tickets`);
+    } else {
+      price = userData.miniGameEntryPrice;
+      lastPriceUpdateTime = userData.lastPriceUpdateTime;
+    }
+
+    res.json({ price, lastPriceUpdateTime });
   } catch (error) {
     console.error('Error getting mini game entry price:', error);
     res.status(500).json({ error: 'Internal server error' });
