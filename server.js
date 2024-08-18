@@ -929,14 +929,14 @@ bot.command('start', async (ctx) => {
       }
     }
 
-    const enterButton = Markup.button.webApp('Join to Method', `${webAppUrl}?telegramId=${telegramId}`);
-    const referralButton = Markup.button.callback('Invite Friends', 'generate_referral');
+    const enterButton = Markup.button.webApp('Join to Method🫧', `${webAppUrl}?telegramId=${telegramId}`);
+    const referralButton = Markup.button.callback('Invite Friends👀', 'generate_referral');
 
     await ctx.reply(
       'Добро пожаловать в Method! ☑️\n\n' +
       'Вот что вы можете сделать с Method прямо сейчас:\n\n' +
       '📊 Farm $MTHC: Начинайте фармить $MTHC, чтобы в будущем обменять валюту на наш токен $MTH или же $TON\n' +
-      '🤖 Приглашайте друзей: Приведите своих друзей и родственников, чтобы получить больше $MTHC! Больше друзей = больше $MTHC\n' +
+      '🤖 Приглашайте друзей: Приведите своих друзей, чтобы получить больше $MTHC! Больше друзей = больше $MTHC\n' +
       '✅ Выполняйте задания: Завершайте задачи и зарабатывайте еще больше $MTHC!\n\n' +
       'Начните зарабатывать $MTHC уже сейчас, и, возможно, в будущем вас ждут удивительные награды! 🚀\n\n' +
       'Оставайтесь с METHOD!💎', 
@@ -957,12 +957,12 @@ bot.action('generate_referral', async (ctx) => {
     const telegramId = user.id.toString();
     const referralLink = await getUserReferralLink(telegramId);
 
-    const shareText = encodeURIComponent(`Join the METHOD with me and earn $MTHC -`);
+    const shareText = encodeURIComponent(`Join to METHOD💎 with me and earn $MTHC🚀`);
     const shareUrl = `https://t.me/share/url?text=${shareText}&url=${referralLink}`;
 
     await ctx.answerCbQuery();
-    await ctx.reply(`Your referral link: ${referralLink}`, Markup.inlineKeyboard([
-      [Markup.button.url('Share a link', shareUrl)]
+    await ctx.reply(`Your link to invite friends: ${referralLink}`, Markup.inlineKeyboard([
+      [Markup.button.url('Share a link 🔁', shareUrl)]
     ]));
   } catch (error) {
     console.error('Error when generating a referral link:', error);
