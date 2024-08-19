@@ -914,6 +914,130 @@ app.get('/getMiniGameEntryPrice', async (req, res) => {
   }
 });
 
+async function updateTotalFarmed(telegramId, reward) {
+  console.log(`Updating total farmed for user ${telegramId} with reward ${reward}`);
+  if (telegramId) {
+    const userRef = database.ref('users/' + telegramId);
+    try {
+      const snapshot = await userRef.once('value');
+      if (snapshot.exists()) {
+        const userData = snapshot.val();
+        let currentTotalFarmed = userData.totalFarmed || 0;
+        let newTotalFarmed = currentTotalFarmed + reward;
+        
+        await userRef.update({ totalFarmed: newTotalFarmed });
+        console.log(`Total farmed updated successfully for user ${telegramId}. New total: ${newTotalFarmed}`);
+        return newTotalFarmed;
+      } else {
+        console.log(`User data not found for telegramId: ${telegramId}`);
+        return null;
+      }
+    } catch (error) {
+      console.error('Error updating total farmed:', error);
+      throw error;
+    }
+  } else {
+    console.error('Telegram ID not provided');
+    throw new Error('Telegram ID not provided');
+  }
+}
+
+app.post('/updateTotalFarmed', async (req, res) => {
+  const { telegramId, reward } = req.body;
+  if (!telegramId || reward === undefined) {
+    return res.status(400).json({ error: 'Telegram ID and reward are required' });
+  }
+  try {
+    const newTotalFarmed = await updateTotalFarmed(telegramId, reward);
+    res.json({ success: true, newTotalFarmed });
+  } catch (error) {
+    console.error('Error in /updateTotalFarmed:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+app.post('/farming', async (req, res) => {
+  const { telegramId, action } = req.body;
+  if (!telegramId || !action) {
+      return res.status(400).json({ error: 'Telegram ID and action are required' });
+  }
+
+  try {
+      const userRef = database.ref('users/' + telegramId);
+      const snapshot = await userRef.once('value');
+
+      if (snapshot.exists()) {
+          const userData = snapshot.val();
+          const currentTime = Date.now();
+
+          if (action === 'start') {
+              const farmingStartTime = currentTime;
+              const farmingEndTime = farmingStartTime + (6 * 60 * 60 * 1000); // 6 часов в миллисекундах
+
+              await userRef.update({
+                  farmingState: {
+                      isActive: true,
+                      startTime: farmingStartTime,
+                      endTime: farmingEndTime
+                  }
+              });
+
+              res.json({ success: true, endTime: farmingEndTime });
+          } else if (action === 'claim') {
+              const farmingState = userData.farmingState;
+              if (farmingState && farmingState.isActive && currentTime >= farmingState.endTime) {
+                  let currentTotalFarmed = userData.totalFarmed || 0;
+                  let newTotalFarmed = currentTotalFarmed + 60;
+
+                  await userRef.update({
+                      totalFarmed: newTotalFarmed,
+                      farmingState: {
+                          isActive: false,
+                          startTime: null,
+                          endTime: null
+                      }
+                  });
+
+                  res.json({ success: true, newTotalFarmed });
+              } else {
+                  res.status(400).json({ error: 'Farming is not ready to be claimed' });
+              }
+          } else {
+              res.status(400).json({ error: 'Invalid action' });
+          }
+      } else {
+          res.status(404).json({ error: 'User not found' });
+      }
+  } catch (error) {
+      console.error('Error in farming:', error);
+      res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+app.get('/farmingStatus', async (req, res) => {
+  const { telegramId } = req.query;
+  if (!telegramId) {
+      return res.status(400).json({ error: 'Telegram ID is required' });
+  }
+
+  try {
+      const userRef = database.ref('users/' + telegramId);
+      const snapshot = await userRef.once('value');
+
+      if (snapshot.exists()) {
+          const userData = snapshot.val();
+          const farmingState = userData.farmingState;
+
+          res.json({ farmingState });
+      } else {
+          res.status(404).json({ error: 'User not found' });
+      }
+  } catch (error) {
+      console.error('Error in farmingStatus:', error);
+      res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
 // Обработчики команд бота
 bot.command('start', async (ctx) => {
   try {
