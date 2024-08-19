@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "public": "public",
+    "public": "dist",
     "ignore": [
       "firebase.json",
       "**/.*",
@@ -11,7 +11,27 @@
         "source": "**",
         "destination": "/dbregistr.html"
       }
+    ],
+    "headers": [
+  {
+    "source": "**/*.js",
+    "headers": [
+      {
+        "key": "Content-Type",
+        "value": "application/javascript"
+      }
     ]
+  },
+  {
+    "source": "**/*.js",
+    "headers": [
+      {
+        "key": "Content-Type",
+        "value": "application/javascript"
+      }
+    ]
+  }
+]
   },
   "apphosting": {
     "source": ".",
