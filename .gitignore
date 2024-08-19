@@ -1,0 +1,43 @@
+/*
+!.gitignore
+!/backend
+firebase.json
+# Node.js зависимости
+node_modules/
+
+# Логи
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+firebase-debug.log*
+firebase-debug.*.log*
+
+# Firebase кэш
+.firebase/
+
+# Файлы среды выполнения
+.env
+
+# Файлы сборки
+build/
+dist/
+
+# Кэш npm
+.npm
+
+# Кэш eslint
+.eslintcache
+
+# Файлы REPL истории
+.node_repl_history
+
+# Выходные файлы 'npm pack'
+*.tgz
+
+# Файл целостности Yarn
+.yarn-integrity
+
+# Файлы, сгенерированные dataconnect
+.dataconnect
