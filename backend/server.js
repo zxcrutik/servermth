@@ -14,7 +14,7 @@ const { Cell, Transaction } = TonWeb.boc;
 
 
    const MY_HOT_WALLET_ADDRESS = process.env.MY_HOT_WALLET_ADDRESS;
-
+//
 const app = express();
 app.set('trust proxy', 1);
 app.use(bodyParser.json());
