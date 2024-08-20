@@ -832,15 +832,18 @@ async function createUser(telegramId, telegramUsername) {
 }
 
 async function getUserReferralLink(telegramId) {
-  const userSnapshot = await database.ref(`users/${telegramId}`).once('value');
+  // Удаляем символ $ из telegramId, если он есть
+  const cleanTelegramId = telegramId.replace('$', '');
+  
+  const userSnapshot = await database.ref(`users/${cleanTelegramId}`).once('value');
   
   if (userSnapshot.exists() && userSnapshot.val().referralCode) {
     return `https://t.me/${bot.botInfo.username}?start=${userSnapshot.val().referralCode}`;
   } else {
     const referralCode = Math.random().toString(36).substring(2, 15);
-    await database.ref(`users/${telegramId}/referralCode`).set(referralCode);
+    await database.ref(`users/${cleanTelegramId}/referralCode`).set(referralCode);
     await database.ref(`inviteCodes/${referralCode}`).set({
-      telegramId: telegramId,
+      telegramId: cleanTelegramId,
       createdAt: Date.now()
     });
     return `https://t.me/${bot.botInfo.username}?start=${referralCode}`;
@@ -1162,17 +1165,21 @@ app.post('/createUser', async (req, res) => {
 });
 
 app.get('/getUserReferralLink', async (req, res) => {
-    const telegramId = req.query.telegramId;
-    if (!telegramId) {
-        return res.status(400).json({ error: 'Telegram ID не предоставлен' });
-    }
-    try {
-        const referralLink = await getUserReferralLink(telegramId);
-        res.json({ referralLink });
-    } catch (error) {
-        console.error('Ошибка при получении реферальной ссылки:', error);
-        res.status(500).json({ error: 'Внутренняя ошибка сервера' });
-    }
+  let telegramId = req.query.telegramId || (req.user && req.user.telegramId);
+  
+  // Удаляем символ $ из telegramId, если он есть
+  telegramId = telegramId ? telegramId.replace('$', '') : null;
+
+  if (!telegramId) {
+      return res.status(400).json({ error: 'Telegram ID не предоставлен' });
+  }
+  try {
+      const referralLink = await getUserReferralLink(telegramId);
+      res.json({ referralLink });
+  } catch (error) {
+      console.error('Ошибка при получении реферальной ссылки:', error);
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+  }
 });
   
 //логирование для отладки
