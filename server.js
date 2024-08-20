@@ -1130,7 +1130,7 @@ app.post('/botWebhook', (req, res) => {
   });
   
   app.get('/getUserData', async (req, res) => {
-    const telegramId = req.query.telegramId || (req.user && req.user.telegramId);
+    const telegramId = req.query.telegramId;
     if (!telegramId) {
         return res.status(400).json({ error: 'Telegram ID не предоставлен' });
     }
@@ -1162,7 +1162,7 @@ app.post('/createUser', async (req, res) => {
 });
 
 app.get('/getUserReferralLink', async (req, res) => {
-    const telegramId = req.query.telegramId || (req.user && req.user.telegramId);
+    const telegramId = req.query.telegramId;
     if (!telegramId) {
         return res.status(400).json({ error: 'Telegram ID не предоставлен' });
     }
