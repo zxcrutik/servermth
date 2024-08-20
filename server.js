@@ -975,7 +975,7 @@ app.post('/farming', async (req, res) => {
 
           if (action === 'start') {
               const farmingStartTime = currentTime;
-              const farmingEndTime = farmingStartTime + (6 * 60 * 60 * 1000); // 6 часов в миллисекундах
+              const farmingEndTime = farmingStartTime + (12 * 60 * 60 * 1000); // 12 часов в миллисекундах
 
               await userRef.update({
                   farmingState: {
@@ -990,7 +990,7 @@ app.post('/farming', async (req, res) => {
               const farmingState = userData.farmingState;
               if (farmingState && farmingState.isActive && currentTime >= farmingState.endTime) {
                   let currentTotalFarmed = userData.totalFarmed || 0;
-                  let newTotalFarmed = currentTotalFarmed + 60;
+                  let newTotalFarmed = currentTotalFarmed + 120;
 
                   await userRef.update({
                       totalFarmed: newTotalFarmed,
