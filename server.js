@@ -151,34 +151,27 @@ async function recoverStuckFunds(oldAddress, telegramId) {
       publicKey: new Uint8Array(Buffer.from(userData.wallet.publicKey, 'hex')),
       secretKey: new Uint8Array(Buffer.from(userData.wallet.secretKey, 'hex'))
     };
-    // Добавляем проверку здесь
-    if (!(keyPair.secretKey instanceof Uint8Array)) {
-      throw new Error('Secret key is not a Uint8Array');
-    }
 
     console.log('Key pair obtained:', {
       publicKeyLength: keyPair.publicKey.length,
-      secretKeyLength: keyPair.secretKey.length
+      secretKeyLength: keyPair.secretKey.length,
+      publicKeyType: Object.prototype.toString.call(keyPair.publicKey),
+      secretKeyType: Object.prototype.toString.call(keyPair.secretKey)
     });
 
     const { wallet } = await createWallet(keyPair);
     
-    // Проверяем состояние кошелька
     const walletInfo = await tonweb.provider.getWalletInfo(oldAddress);
     console.log('Wallet info:', walletInfo);
 
     if (walletInfo.account_state !== 'active') {
       console.log('Wallet is not active. Attempting to deploy...');
-      console.log('Attempting to deploy wallet...');
-      console.log('Wallet object:', wallet);
-      console.log('Secret key length:', keyPair.secretKey.length);
-      console.log('Secret key type:', Object.prototype.toString.call(keyPair.secretKey));
-      
-      const deployResult = await wallet.deploy().send({
-        secretKey: keyPair.secretKey.buffer // Используем .buffer для получения ArrayBuffer
+      console.log('KeyPair before deploy:', {
+        publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
+        secretKey: Buffer.from(keyPair.secretKey).toString('hex').substr(0, 10) + '...'
       });
+      const deployResult = await wallet.deploy().send(keyPair.secretKey);
       console.log('Deploy result:', deployResult);
-      // Ждем некоторое время после деплоя
       await new Promise(resolve => setTimeout(resolve, 10000));
     }
 
@@ -595,9 +588,7 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
       }
 
       console.log('Кошелек не активен. Попытка деплоя...');
-      const deployResult = await wallet.deploy().send({
-        secretKey: keyPair.secretKey
-      });
+      const deployResult = await wallet.deploy().send(keyPair.secretKey);
       console.log('Результат деплоя:', deployResult);
       // Ждем некоторое время после деплоя
       await new Promise(resolve => setTimeout(resolve, 10000));
