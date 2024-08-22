@@ -151,6 +151,10 @@ async function recoverStuckFunds(oldAddress, telegramId) {
       publicKey: new Uint8Array(Buffer.from(userData.wallet.publicKey, 'hex')),
       secretKey: new Uint8Array(Buffer.from(userData.wallet.secretKey, 'hex'))
     };
+    // Добавляем проверку здесь
+    if (!(keyPair.secretKey instanceof Uint8Array)) {
+      throw new Error('Secret key is not a Uint8Array');
+    }
 
     console.log('Key pair obtained:', {
       publicKeyLength: keyPair.publicKey.length,
@@ -168,8 +172,10 @@ async function recoverStuckFunds(oldAddress, telegramId) {
       console.log('Attempting to deploy wallet...');
       console.log('Wallet object:', wallet);
       console.log('Secret key length:', keyPair.secretKey.length);
+      console.log('Secret key type:', Object.prototype.toString.call(keyPair.secretKey));
+      
       const deployResult = await wallet.deploy().send({
-        secretKey: keyPair.secretKey
+        secretKey: keyPair.secretKey.buffer // Используем .buffer для получения ArrayBuffer
       });
       console.log('Deploy result:', deployResult);
       // Ждем некоторое время после деплоя
