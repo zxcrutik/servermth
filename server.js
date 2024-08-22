@@ -20,7 +20,7 @@ app.set('trust proxy', 1);
 app.use(bodyParser.json());
 
 app.use(cors({
-  origin: 'https://method-e6c6c.web.app', 
+  origin: 'https://www.method-ton.space', 
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
@@ -37,7 +37,7 @@ admin.initializeApp({
 
 const database = admin.database();
 const token = process.env.TELEGRAM_TOKEN;
-const webAppUrl = 'https://method-e6c6c.web.app';
+const webAppUrl = 'https://www.method-ton.space';
 const bot = new Telegraf(token);
 
 const rateLimit = require('express-rate-limit');

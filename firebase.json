@@ -14,21 +14,28 @@
     ],
     "headers": [
       {
-        "source": "**",
+        "source": "/manifest.json",
         "headers": [
           {
             "key": "Access-Control-Allow-Origin",
-            "value": "*"
+            "value": "https://walletbot.me"
           },
           {
             "key": "Access-Control-Allow-Methods",
-            "value": "GET, POST, OPTIONS"
+            "value": "GET, OPTIONS"
           },
           {
             "key": "Access-Control-Allow-Headers",
             "value": "Origin, X-Requested-With, Content-Type, Accept"
           }
         ]
+      }
+    ],
+    "redirects": [
+      {
+        "source": "https://method-ton.space/:path*",
+        "destination": "https://www.method-ton.space/:path*",
+        "type": 301
       }
     ]
   },
