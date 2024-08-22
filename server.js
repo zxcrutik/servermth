@@ -129,80 +129,73 @@ async function updateExistingUserWallet(telegramId) {
 }
 
 async function recoverStuckFunds(oldAddress, telegramId) {
-  console.log(`Attempting to recover funds from ${oldAddress} for Telegram ID: ${telegramId}`);
+  console.log(`Попытка восстановления средств с ${oldAddress} для Telegram ID: ${telegramId}`);
+
   try {
-    const balance = await tonweb.provider.getBalance(oldAddress);
-    console.log('Current balance of old wallet:', balance);
-    
-    if (balance === '0') {
-      console.log('No funds to recover');
-      return { status: 'no_funds', message: 'No funds to recover' };
+    // Проверяем баланс старого кошелька
+    const balance = new TonWeb.utils.BN(await tonweb.provider.getBalance(oldAddress));
+    console.log('Текущий баланс старого кошелька:', balance.toString());
+
+    if (balance.isZero()) {
+      console.log('Нет средств для восстановления');
+      return { status: 'no_funds', message: 'Нет средств для восстановления' };
     }
 
-    const userRef = database.ref(`users/${telegramId}`);
-    const snapshot = await userRef.once('value');
-    const userData = snapshot.val();
-
-    if (!userData || !userData.wallet || !userData.wallet.secretKey) {
-      throw new Error('User wallet data not found');
+    // Получаем информацию о пользователе
+    const userSnapshot = await database.ref(`users/${telegramId}`).once('value');
+    const userData = userSnapshot.val();
+    if (!userData || !userData.wallet || !userData.wallet.publicKey || !userData.wallet.secretKey) {
+      throw new Error('Не найдена информация о кошельке пользователя');
     }
 
+    // Получаем ключевую пару пользователя
     const keyPair = {
       publicKey: Buffer.from(userData.wallet.publicKey, 'hex'),
       secretKey: Buffer.from(userData.wallet.secretKey, 'hex')
     };
 
-    console.log('Key pair obtained:', {
-      publicKeyLength: keyPair.publicKey.length,
-      secretKeyLength: keyPair.secretKey.length,
-      publicKeyType: Object.prototype.toString.call(keyPair.publicKey),
-      secretKeyType: Object.prototype.toString.call(keyPair.secretKey)
-    });
-
     const { wallet } = await createWallet(keyPair);
-    
-    const walletInfo = await tonweb.provider.getWalletInfo(oldAddress);
-    console.log('Wallet info:', walletInfo);
+    let seqno = await getSeqno(wallet);
 
-    if (walletInfo.account_state !== 'active') {
-      console.log('Wallet is not active. Attempting to deploy...');
-      console.log('KeyPair before deploy:', {
-        publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
-        secretKey: Buffer.from(keyPair.secretKey).toString('hex').substr(0, 10) + '...'
-      });
-      const deployResult = await wallet.deploy().send(keyPair.secretKey);
-      console.log('Deploy result:', deployResult);
-      await new Promise(resolve => setTimeout(resolve, 10000));
+    const minTransferAmount = TonWeb.utils.toNano('0.001');
+    const feeReserve = TonWeb.utils.toNano('0.01');
+
+    let amountToTransfer = balance.sub(feeReserve);
+    if (amountToTransfer.lt(minTransferAmount)) {
+      console.log('Сумма слишком мала, пытаемся перевести весь баланс');
+      amountToTransfer = balance;
     }
 
-    let seqno = await getSeqno(wallet);
-    console.log('Current seqno:', seqno);
-
-    console.log('Attempting to transfer funds to hot wallet');
-    const amountToTransfer = new TonWeb.utils.BN(balance).sub(TonWeb.utils.toNano('0.01')); // Оставляем небольшой запас на комиссию
-    
+    console.log('Попытка перевода средств на горячий кошелек');
     const transfer = await wallet.methods.transfer({
       secretKey: keyPair.secretKey,
       toAddress: MY_HOT_WALLET_ADDRESS,
       amount: amountToTransfer,
       seqno: seqno,
-      payload: 'Recover stuck funds',
+      payload: `Recover:${telegramId}`,
       sendMode: 3,
     });
 
     const transferResult = await transfer.send();
-    console.log('Recovery transfer result:', transferResult);
+    console.log('Результат перевода:', transferResult);
 
     if (transferResult['@type'] === 'ok') {
-      console.log('Funds successfully recovered');
-      return { status: 'success', message: 'Funds successfully recovered' };
+      console.log('Перевод успешно выполнен');
+      return { 
+        status: 'success', 
+        message: 'Средства успешно восстановлены',
+        amount: amountToTransfer.toString()
+      };
     } else {
-      console.log('Transfer initiated, waiting for confirmation');
-      return { status: 'pending', message: 'Transfer initiated, waiting for confirmation' };
+      console.log('Перевод инициирован, ожидается подтверждение');
+      return { 
+        status: 'pending', 
+        message: 'Перевод инициирован, ожидается подтверждение',
+        transactionId: transferResult.transaction_id
+      };
     }
   } catch (error) {
-    console.error('Error recovering stuck funds:', error);
-    console.error('Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+    console.error('Ошибка в recoverStuckFunds:', error);
     return { status: 'error', message: error.message };
   }
 }
