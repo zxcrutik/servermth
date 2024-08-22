@@ -136,7 +136,7 @@ async function recoverStuckFunds(oldAddress, telegramId) {
     
     if (balance === '0') {
       console.log('No funds to recover');
-      return;
+      return { status: 'no_funds', message: 'No funds to recover' };
     }
 
     const userRef = database.ref(`users/${telegramId}`);
@@ -158,7 +158,21 @@ async function recoverStuckFunds(oldAddress, telegramId) {
     });
 
     const { wallet } = await createWallet(keyPair);
+    
+    // Проверяем состояние кошелька
+    const walletInfo = await tonweb.provider.getWalletInfo(oldAddress);
+    console.log('Wallet info:', walletInfo);
+
+    if (walletInfo.account_state !== 'active') {
+      console.log('Wallet is not active. Attempting to deploy...');
+      const deployResult = await wallet.deploy().send();
+      console.log('Deploy result:', deployResult);
+      // Ждем некоторое время после деплоя
+      await new Promise(resolve => setTimeout(resolve, 10000));
+    }
+
     let seqno = await getSeqno(wallet);
+    console.log('Current seqno:', seqno);
 
     console.log('Attempting to transfer funds to hot wallet');
     const amountToTransfer = new TonWeb.utils.BN(balance).sub(TonWeb.utils.toNano('0.01')); // Оставляем небольшой запас на комиссию
@@ -177,7 +191,6 @@ async function recoverStuckFunds(oldAddress, telegramId) {
 
     if (transferResult['@type'] === 'ok') {
       console.log('Funds successfully recovered');
-      // Здесь можно добавить логику обновления баланса пользователя
       return { status: 'success', message: 'Funds successfully recovered' };
     } else {
       console.log('Transfer initiated, waiting for confirmation');
