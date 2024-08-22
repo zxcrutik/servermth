@@ -80,14 +80,15 @@ async function generateDepositAddress(telegramId) {
     console.log('Wallet created, address:', address);
     
     // Сохраняем keyPair и address в базу данных, связав с telegramId
-    await database.ref('users/' + telegramId).update({
-      wallet: {
-        publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
-        secretKey: Buffer.from(keyPair.secretKey).toString('hex'),
-        address: address
-      }
-    });
-    console.log('Wallet info saved to database');
+    const walletData = {
+      publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
+      secretKey: Buffer.from(keyPair.secretKey).toString('hex'),
+      address: address
+    };
+    
+    await database.ref(`users/${telegramId}/wallet`).set(walletData);
+    console.log('Wallet data saved to database');
+    
     return address;
   } catch (error) {
     console.error('Error generating deposit address:', error);
