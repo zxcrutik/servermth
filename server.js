@@ -165,7 +165,12 @@ async function recoverStuckFunds(oldAddress, telegramId) {
 
     if (walletInfo.account_state !== 'active') {
       console.log('Wallet is not active. Attempting to deploy...');
-      const deployResult = await wallet.deploy().send();
+      console.log('Attempting to deploy wallet...');
+      console.log('Wallet object:', wallet);
+      console.log('Secret key length:', keyPair.secretKey.length);
+      const deployResult = await wallet.deploy().send({
+        secretKey: keyPair.secretKey
+      });
       console.log('Deploy result:', deployResult);
       // Ждем некоторое время после деплоя
       await new Promise(resolve => setTimeout(resolve, 10000));
@@ -198,6 +203,7 @@ async function recoverStuckFunds(oldAddress, telegramId) {
     }
   } catch (error) {
     console.error('Error recovering stuck funds:', error);
+    console.error('Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
     return { status: 'error', message: error.message };
   }
 }
@@ -583,7 +589,9 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
       }
 
       console.log('Кошелек не активен. Попытка деплоя...');
-      const deployResult = await wallet.deploy().send();
+      const deployResult = await wallet.deploy().send({
+        secretKey: keyPair.secretKey
+      });
       console.log('Результат деплоя:', deployResult);
       // Ждем некоторое время после деплоя
       await new Promise(resolve => setTimeout(resolve, 10000));

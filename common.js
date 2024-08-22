@@ -21,13 +21,18 @@ const createKeyPair = async () => {
 
 const createWallet = async (keyPair) => {
     console.log('Starting createWallet');
+    console.log('KeyPair:', {
+        publicKeyLength: keyPair.publicKey.length,
+        secretKeyLength: keyPair.secretKey.length
+    });
     const WalletClass = tonweb.wallet.all.v3R2;
     const wallet = new WalletClass(tonweb.provider, {
         publicKey: keyPair.publicKey instanceof Uint8Array ? keyPair.publicKey : new Uint8Array(keyPair.publicKey)
     });
     console.log('Wallet instance created');
+    console.log('Wallet methods:', Object.keys(wallet.methods));
     const address = await wallet.getAddress();
-    console.log('Address generated');
+    console.log('Address generated:', address.toString(true, true, false));
     return {
         wallet,
         address: address.toString(true, true, false)
