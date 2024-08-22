@@ -132,6 +132,8 @@ async function recoverStuckFunds(oldAddress, telegramId) {
   console.log(`Attempting to recover funds from ${oldAddress} for Telegram ID: ${telegramId}`);
   try {
     const balance = await tonweb.provider.getBalance(oldAddress);
+    console.log('Current balance of old wallet:', balance);
+    
     if (balance === '0') {
       console.log('No funds to recover');
       return;
@@ -150,24 +152,40 @@ async function recoverStuckFunds(oldAddress, telegramId) {
       secretKey: Buffer.from(userData.wallet.secretKey, 'hex')
     };
 
-    const { wallet } = await createWallet(keyPair);
-    const seqno = await wallet.methods.seqno().call();
+    console.log('Key pair obtained:', {
+      publicKeyLength: keyPair.publicKey.length,
+      secretKeyLength: keyPair.secretKey.length
+    });
 
+    const { wallet } = await createWallet(keyPair);
+    let seqno = await getSeqno(wallet);
+
+    console.log('Attempting to transfer funds to hot wallet');
+    const amountToTransfer = new TonWeb.utils.BN(balance).sub(TonWeb.utils.toNano('0.01')); // Оставляем небольшой запас на комиссию
+    
     const transfer = await wallet.methods.transfer({
       secretKey: keyPair.secretKey,
       toAddress: MY_HOT_WALLET_ADDRESS,
-      amount: balance,
+      amount: amountToTransfer,
       seqno: seqno,
       payload: 'Recover stuck funds',
       sendMode: 3,
     });
 
-    const result = await transfer.send();
-    console.log('Recovery transfer result:', result);
+    const transferResult = await transfer.send();
+    console.log('Recovery transfer result:', transferResult);
 
-    // Обновляем баланс пользователя или выполняем другие необходимые действия
+    if (transferResult['@type'] === 'ok') {
+      console.log('Funds successfully recovered');
+      // Здесь можно добавить логику обновления баланса пользователя
+      return { status: 'success', message: 'Funds successfully recovered' };
+    } else {
+      console.log('Transfer initiated, waiting for confirmation');
+      return { status: 'pending', message: 'Transfer initiated, waiting for confirmation' };
+    }
   } catch (error) {
     console.error('Error recovering stuck funds:', error);
+    return { status: 'error', message: error.message };
   }
 }
 
@@ -178,13 +196,18 @@ app.post('/updateUserWallet', async (req, res) => {
   }
   try {
     await updateExistingUserWallet(telegramId);
+    let recoveryResult = null;
     if (oldAddress) {
-      await recoverStuckFunds(oldAddress, telegramId);
+      recoveryResult = await recoverStuckFunds(oldAddress, telegramId);
     }
-    res.json({ success: true, message: 'Wallet updated and funds recovered' });
+    res.json({ 
+      success: true, 
+      message: 'Wallet updated', 
+      recoveryResult 
+    });
   } catch (error) {
     console.error('Error in updateUserWallet:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
