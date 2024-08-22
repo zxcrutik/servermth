@@ -380,22 +380,14 @@ app.get('/getDepositAddress', async (req, res) => {
     const snapshot = await userRef.once('value');
     const userData = snapshot.val();
 
-    if (userData && userData.wallet && userData.wallet.address) {
-      console.log('Existing deposit address found:', userData.wallet.address);
+    if (userData && userData.wallet && userData.wallet.address && userData.wallet.publicKey && userData.wallet.secretKey) {
+      console.log('Existing wallet data found:', userData.wallet.address);
       return res.json({ address: userData.wallet.address });
     }
 
-    console.log('No existing address found, generating new one...');
+    console.log('No existing wallet data found, generating new one...');
     const address = await generateDepositAddress(telegramId);
     console.log('New deposit address generated:', address);
-
-    // Сохраняем новый адрес в базу данных
-    await userRef.update({
-      wallet: {
-        address: address
-      }
-    });
-    console.log('New address saved to database');
 
     res.json({ address });
   } catch (error) {
@@ -539,8 +531,12 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
     // Получаем информацию о пользователе и транзакции
     const userSnapshot = await database.ref(`users/${telegramId}`).once('value');
     const userData = userSnapshot.val();
-    if (!userData || !userData.wallet || !userData.wallet.address) {
-      throw new Error('Не найдена информация о кошельке пользователя');
+    if (!userData || !userData.wallet || !userData.wallet.publicKey || !userData.wallet.secretKey) {
+      console.log('Wallet data is incomplete. Updating...');
+      await updateExistingUserWallet(telegramId);
+      // Получаем обновленные данные
+      const updatedSnapshot = await database.ref(`users/${telegramId}`).once('value');
+      userData = updatedSnapshot.val();
     }
     const address = userData.wallet.address;
 
