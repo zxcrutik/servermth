@@ -148,8 +148,8 @@ async function recoverStuckFunds(oldAddress, telegramId) {
     }
 
     const keyPair = {
-      publicKey: new Uint8Array(Buffer.from(userData.wallet.publicKey, 'hex')),
-      secretKey: new Uint8Array(Buffer.from(userData.wallet.secretKey, 'hex'))
+      publicKey: Buffer.from(userData.wallet.publicKey, 'hex'),
+      secretKey: Buffer.from(userData.wallet.secretKey, 'hex')
     };
 
     console.log('Key pair obtained:', {
@@ -557,51 +557,11 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
 
     const minTransferAmount = TonWeb.utils.toNano('0.001');
     const feeReserve = TonWeb.utils.toNano('0.01');
-    const deployFee = TonWeb.utils.toNano('0.01'); // Примерная стоимость деплоя
 
-    // Получаем ключевую пару пользователя
-    if (!userData.wallet.publicKey || !userData.wallet.secretKey) {
-      throw new Error('Отсутствуют данные ключей кошелька пользователя');
-    }
-
-    const keyPair = {
-      publicKey: Buffer.from(userData.wallet.publicKey, 'hex'),
-      secretKey: Buffer.from(userData.wallet.secretKey, 'hex')
-    };
-
-    console.log('Ключевая пара получена:', {
-      publicKeyLength: keyPair.publicKey.length,
-      secretKeyLength: keyPair.secretKey.length
-    });
-
-    const { wallet } = await createWallet(keyPair);
-    
-    // Проверяем состояние кошелька
-    const walletInfo = await tonweb.provider.getWalletInfo(address);
-    console.log('Информация о кошельке:', walletInfo);
-
-    if (walletInfo.account_state !== 'active') {
-      if (balance.lt(deployFee.add(minTransferAmount).add(feeReserve))) {
-        console.log('Недостаточный баланс для активации кошелька и перевода');
-        await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, balance.toString(), 'Недостаточный баланс для активации кошелька и перевода');
-        return { status: 'insufficient_balance', message: 'Недостаточный баланс для активации кошелька и перевода' };
-      }
-
-      console.log('Кошелек не активен. Попытка деплоя...');
-      const deployResult = await wallet.deploy().send(keyPair.secretKey);
-      console.log('Результат деплоя:', deployResult);
-      // Ждем некоторое время после деплоя
-      await new Promise(resolve => setTimeout(resolve, 10000));
-      
-      // Обновляем баланс после деплоя
-      const newBalance = new TonWeb.utils.BN(await tonweb.provider.getBalance(address));
-      console.log('Баланс после деплоя:', newBalance.toString());
-      
-      if (newBalance.lt(minTransferAmount.add(feeReserve))) {
-        console.log('Недостаточный баланс для перевода после деплоя');
-        await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, newBalance.toString(), 'Недостаточный баланс для перевода после деплоя');
-        return { status: 'insufficient_balance', message: 'Недостаточный баланс для перевода после деплоя' };
-      }
+    if (balance.lt(minTransferAmount.add(feeReserve))) {
+      console.log('Недостаточный баланс для перевода');
+      await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, balance.toString(), 'Недостаточный баланс для перевода');
+      return { status: 'insufficient_balance', message: 'Недостаточный баланс для перевода' };
     }
 
     let amountToTransfer = balance.sub(feeReserve);
@@ -610,6 +570,13 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
       amountToTransfer = balance;
     }
 
+    // Получаем ключевую пару пользователя
+    const keyPair = {
+      publicKey: Buffer.from(userData.wallet.publicKey, 'hex'),
+      secretKey: Buffer.from(userData.wallet.secretKey, 'hex')
+    };
+
+    const { wallet } = await createWallet(keyPair);
     let seqno = await getSeqno(wallet);
 
     console.log('Попытка перевода средств на горячий кошелек');
@@ -646,10 +613,10 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
     }
   } catch (error) {
     console.error('Ошибка в attemptTransferToHotWallet:', error);
-    console.error('Детали ошибки:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
     await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, null, error.message);
     return { status: 'error', message: error.message };
   } finally {
+
     transferAttempts.delete(uniqueId);
   }
 }
