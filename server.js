@@ -96,7 +96,97 @@ async function generateDepositAddress(telegramId) {
   }
 }
 
+async function updateExistingUserWallet(telegramId) {
+  console.log(`Updating wallet for Telegram ID: ${telegramId}`);
+  try {
+    const userRef = database.ref(`users/${telegramId}`);
+    const snapshot = await userRef.once('value');
+    const userData = snapshot.val();
 
+    if (userData && userData.wallet && userData.wallet.address && !userData.wallet.publicKey) {
+      // У пользователя есть адрес, но нет ключей
+      const keyPair = await createKeyPair();
+      const { wallet, address } = await createWallet(keyPair);
+
+      // Проверяем, совпадает ли новый адрес с существующим
+      if (address !== userData.wallet.address) {
+        console.log(`Warning: New address ${address} doesn't match existing ${userData.wallet.address}`);
+        // Здесь можно добавить логику для обработки несовпадения адресов
+      }
+
+      const walletData = {
+        publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
+        secretKey: Buffer.from(keyPair.secretKey).toString('hex'),
+        address: address
+      };
+
+      await userRef.child('wallet').update(walletData);
+      console.log('Wallet data updated for existing user');
+    }
+  } catch (error) {
+    console.error('Error updating existing user wallet:', error);
+  }
+}
+
+async function recoverStuckFunds(oldAddress, telegramId) {
+  console.log(`Attempting to recover funds from ${oldAddress} for Telegram ID: ${telegramId}`);
+  try {
+    const balance = await tonweb.provider.getBalance(oldAddress);
+    if (balance === '0') {
+      console.log('No funds to recover');
+      return;
+    }
+
+    const userRef = database.ref(`users/${telegramId}`);
+    const snapshot = await userRef.once('value');
+    const userData = snapshot.val();
+
+    if (!userData || !userData.wallet || !userData.wallet.secretKey) {
+      throw new Error('User wallet data not found');
+    }
+
+    const keyPair = {
+      publicKey: Buffer.from(userData.wallet.publicKey, 'hex'),
+      secretKey: Buffer.from(userData.wallet.secretKey, 'hex')
+    };
+
+    const { wallet } = await createWallet(keyPair);
+    const seqno = await wallet.methods.seqno().call();
+
+    const transfer = await wallet.methods.transfer({
+      secretKey: keyPair.secretKey,
+      toAddress: MY_HOT_WALLET_ADDRESS,
+      amount: balance,
+      seqno: seqno,
+      payload: 'Recover stuck funds',
+      sendMode: 3,
+    });
+
+    const result = await transfer.send();
+    console.log('Recovery transfer result:', result);
+
+    // Обновляем баланс пользователя или выполняем другие необходимые действия
+  } catch (error) {
+    console.error('Error recovering stuck funds:', error);
+  }
+}
+
+app.post('/updateUserWallet', async (req, res) => {
+  const { telegramId, oldAddress } = req.body;
+  if (!telegramId) {
+    return res.status(400).json({ error: 'Telegram ID не предоставлен' });
+  }
+  try {
+    await updateExistingUserWallet(telegramId);
+    if (oldAddress) {
+      await recoverStuckFunds(oldAddress, telegramId);
+    }
+    res.json({ success: true, message: 'Wallet updated and funds recovered' });
+  } catch (error) {
+    console.error('Error in updateUserWallet:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 async function verifyTransaction(uniqueId, telegramId, ticketAmount, transactionHash) {
   console.log(`Начало проверки транзакции. UniqueId: ${uniqueId}, TelegramId: ${telegramId}, Количество билетов: ${ticketAmount}, TransactionHash: ${transactionHash}`);
