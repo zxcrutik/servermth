@@ -439,10 +439,19 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
     }
 
     // Получаем ключевую пару пользователя
+    if (!userData.wallet.publicKey || !userData.wallet.secretKey) {
+      throw new Error('Отсутствуют данные ключей кошелька пользователя');
+    }
+
     const keyPair = {
       publicKey: Buffer.from(userData.wallet.publicKey, 'hex'),
       secretKey: Buffer.from(userData.wallet.secretKey, 'hex')
     };
+
+    console.log('Ключевая пара получена:', {
+      publicKeyLength: keyPair.publicKey.length,
+      secretKeyLength: keyPair.secretKey.length
+    });
 
     const { wallet } = await createWallet(keyPair);
     let seqno = await getSeqno(wallet);
@@ -481,10 +490,10 @@ async function attemptTransferToHotWallet(telegramId, uniqueId, ticketAmount) {
     }
   } catch (error) {
     console.error('Ошибка в attemptTransferToHotWallet:', error);
+    console.error('Детали ошибки:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
     await updateUserTransferStatus(telegramId, 'failed', { uniqueId }, null, error.message);
     return { status: 'error', message: error.message };
   } finally {
-
     transferAttempts.delete(uniqueId);
   }
 }
