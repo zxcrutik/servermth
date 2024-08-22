@@ -23,7 +23,7 @@ const createWallet = async (keyPair) => {
     console.log('Starting createWallet');
     const WalletClass = tonweb.wallet.all.v3R2;
     const wallet = new WalletClass(tonweb.provider, {
-        publicKey: keyPair.publicKey
+        publicKey: keyPair.publicKey instanceof Uint8Array ? keyPair.publicKey : new Uint8Array(keyPair.publicKey)
     });
     console.log('Wallet instance created');
     const address = await wallet.getAddress();
