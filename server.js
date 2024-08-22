@@ -1208,35 +1208,3 @@ app.get('/health', (req, res) => {
 
 
 
-
-const dailyDeals = [
-  { tickets: 5, oldPrice: 0.35, newPrice: 0.15 },
-  { tickets: 10, oldPrice: 0.7, newPrice: 0.35 },
-  { tickets: 15, oldPrice: 1.05, newPrice: 0.55 }
-];
-
-let currentDealIndex = 0;
-let dealPurchases = {};
-
-app.get('/getCurrentDailyDeal', (req, res) => {
-  const currentDeal = dailyDeals[currentDealIndex];
-  res.json(currentDeal);
-});
-
-app.post('/purchaseDailyDeal', (req, res) => {
-  const { telegramId } = req.body;
-  if (dealPurchases[telegramId] && dealPurchases[telegramId].includes(currentDealIndex)) {
-      res.status(400).json({ error: 'You have already purchased this deal' });
-  } else {
-      if (!dealPurchases[telegramId]) {
-          dealPurchases[telegramId] = [];
-      }
-      dealPurchases[telegramId].push(currentDealIndex);
-      res.json({ success: true, message: 'Deal purchased successfully' });
-  }
-});
-
-// Функция для ротации акций каждые 20 секунд
-setInterval(() => {
-  currentDealIndex = (currentDealIndex + 1) % dailyDeals.length;
-}, 20000);
