@@ -937,7 +937,7 @@ async function createUser(telegramId, telegramUsername) {
     telegramUsername: telegramUsername,
     totalFarmed: 0,
     mthtotalfarmed: 0,
-    ticketBalance: 1,
+    ticketBalance: 5,
     clickCount: 0,
     lastClickTime: 0,
     friendsCount: 0,
@@ -1197,7 +1197,7 @@ bot.command('start', async (ctx) => {
     }
 
     const enterButton = Markup.button.webApp('Join to Method🫧', `${webAppUrl}?telegramId=${telegramId}`);
-    const referralButton = Markup.button.callback('Invite Friends👀', 'generate_referral');
+const communityButton = Markup.button.url('Join to Community💎', 'https://t.me/method_community');
 
     await ctx.reply(
       'Добро пожаловать в Method! ☑️\n\n' +
@@ -1209,31 +1209,12 @@ bot.command('start', async (ctx) => {
       'Оставайтесь с METHOD!💎', 
       Markup.inlineKeyboard([
         [enterButton],
-        [referralButton]
+        [communityButton]
       ])
     );
   } catch (error) {
     console.error('Error with /start command:', error);
     ctx.reply('An error occurred while processing your request. Please try again later.');
-  }
-});
-
-bot.action('generate_referral', async (ctx) => {
-  try {
-    const user = ctx.from;
-    const telegramId = user.id.toString();
-    const referralLink = await getUserReferralLink(telegramId);
-
-    const shareText = encodeURIComponent(`Join to METHOD💎 with me and earn $MTHC🚀`);
-    const shareUrl = `https://t.me/share/url?text=${shareText}&url=${referralLink}`;
-
-    await ctx.answerCbQuery();
-    await ctx.reply(`Your link to invite friends: ${referralLink}`, Markup.inlineKeyboard([
-      [Markup.button.url('Share a link 🔁', shareUrl)]
-    ]));
-  } catch (error) {
-    console.error('Error when generating a referral link:', error);
-    ctx.answerCbQuery('An error occurred while generating the referral link.');
   }
 });
 
