@@ -971,36 +971,18 @@ async function getUserReferralLink(telegramId) {
   }
 }
 
-async function updateMiniGameEntryPrice(telegramId) {
-  const userRef = database.ref(`users/${telegramId}`);
-  const snapshot = await userRef.once('value');
-  const userData = snapshot.val();
+function getRandomPrice() {
+  const random = Math.random() * 100; // Генерируем случайное число от 0 до 100
 
-  const currentTime = Date.now();
-
-  // Проверяем, существует ли запись пользователя
-  if (!userData || !userData.miniGameEntryPrice || !userData.lastPriceUpdateTime) {
-    const newPrice = Math.floor(Math.random() * 4) + 2; // Случайное число от 2 до 5
-    await userRef.update({
-      miniGameEntryPrice: newPrice,
-      lastPriceUpdateTime: currentTime
-    });
-    console.log(`Created mini game entry price for new user ${telegramId}: ${newPrice} tickets`);
-    return newPrice;
+  if (random < 40) {
+    return 2; // 40% шанс
+  } else if (random < 80) {
+    return 3; // 40% шанс
+  } else if (random < 95) {
+    return 4; // 15% шанс
+  } else {
+    return 5; // 5% шанс
   }
-//
-  // Проверяем, нужно ли обновить цену
-  if (currentTime - userData.lastPriceUpdateTime >= 24 * 60 * 60 * 1000) {
-    const newPrice = Math.floor(Math.random() * 4) + 2; // Случайное число от 2 до 5
-    await userRef.update({
-      miniGameEntryPrice: newPrice,
-      lastPriceUpdateTime: currentTime
-    });
-    console.log(`Updated mini game entry price for user ${telegramId}: ${newPrice} tickets`);
-    return newPrice;
-  }
-
-  return userData.miniGameEntryPrice;
 }
 
 app.get('/getMiniGameEntryPrice', async (req, res) => {
@@ -1019,7 +1001,7 @@ app.get('/getMiniGameEntryPrice', async (req, res) => {
 
     if (!userData || !userData.miniGameEntryPrice || !userData.lastPriceUpdateTime || 
         (currentTime - userData.lastPriceUpdateTime >= 24 * 60 * 60 * 1000)) {
-      price = Math.floor(Math.random() * 4) + 2; // Случайное число от 2 до 5
+          price = getRandomPrice(); // Случайное число от 2 до 5
       lastPriceUpdateTime = currentTime;
       await userRef.update({
         miniGameEntryPrice: price,
