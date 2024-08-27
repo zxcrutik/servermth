@@ -934,7 +934,6 @@ async function getUserData(telegramId) {
 async function createUser(telegramId, telegramUsername) {
   const userData = {
     telegramId: telegramId,
-    telegramUsername: telegramUsername,
     totalFarmed: 0,
     mthtotalfarmed: 0,
     ticketBalance: 5,
@@ -948,6 +947,11 @@ async function createUser(telegramId, telegramUsername) {
       endTime: null
     }
   };
+
+  // Добавляем telegramUsername только если он существует
+  if (telegramUsername) {
+      userData.telegramUsername = telegramUsername;
+  }
 
   await database.ref(`users/${telegramId}`).set(userData);
 }
