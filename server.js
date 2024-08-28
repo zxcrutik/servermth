@@ -117,10 +117,11 @@ async function authMiddleware(req, res, next) {
     return res.status(401).json({ error: 'No authorization header provided' });
   }
 
-  const token = authHeader.split(' ')[1];
-  if (!token) {
-    return res.status(401).json({ error: 'No token provided' });
+  const [bearer, token] = authHeader.split(' ');
+  if (bearer !== 'Bearer' || !token) {
+    return res.status(401).json({ error: 'Invalid authorization header format' });
   }
+
   try {
     const userSnapshot = await database.ref('users').orderByChild('sessionToken').equalTo(token).once('value');
     if (userSnapshot.exists()) {
