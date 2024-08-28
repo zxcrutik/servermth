@@ -79,26 +79,35 @@ function verifyTelegramWebAppData(telegramInitData) {
   return hmac === hash;
 }
 
-app.post('/auth', (req, res) => {
-  const telegramInitData = req.body.initData;
+app.post('/auth',(req, res) => {
+  const { initData } = req.body;
   
-  if (verifyTelegramWebAppData(telegramInitData)) {
-    const initData = new URLSearchParams(telegramInitData);
-    const user = JSON.parse(initData.get('user'));
-    const telegramId = user.id.toString();
+  if (!initData) {
+    return res.status(400).json({ success: false, error: 'No initData provided' });
+  }
 
-    const sessionToken = crypto.randomBytes(64).toString('hex');
+  try {
+    if (verifyTelegramWebAppData(initData)) {
+      const parsedInitData = new URLSearchParams(initData);
+      const user = JSON.parse(parsedInitData.get('user'));
+      const telegramId = user.id.toString();
 
-    database.ref(`users/${telegramId}/sessionToken`).set(sessionToken)
-      .then(() => {
-        res.json({ success: true, sessionToken });
-      })
-      .catch(error => {
-        console.error('Error saving session token:', error);
-        res.status(500).json({ error: 'Internal server error' });
-      });
-  } else {
-    res.status(401).json({ error: 'Invalid Telegram data' });
+      const sessionToken = crypto.randomBytes(64).toString('hex');
+
+      database.ref(`users/${telegramId}/sessionToken`).set(sessionToken)
+        .then(() => {
+          res.json({ success: true, sessionToken });
+        })
+        .catch(error => {
+          console.error('Error saving session token:', error);
+          res.status(500).json({ success: false, error: 'Internal server error' });
+        });
+    } else {
+      res.status(401).json({ success: false, error: 'Invalid Telegram data' });
+    }
+  } catch (error) {
+    console.error('Error in /auth:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
