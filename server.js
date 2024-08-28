@@ -936,7 +936,7 @@ async function createUser(telegramId, telegramUsername) {
     telegramId: telegramId,
     totalFarmed: 0,
     mthtotalfarmed: 0,
-    ticketBalance: 5,
+    ticketBalance: 10,
     clickCount: 0,
     lastClickTime: 0,
     friendsCount: 0,
