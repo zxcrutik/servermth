@@ -58,11 +58,6 @@ app.use('/auth', authLimiter);
 // Применяем ограничение ко всем запросам
 app.use(limiter);
 
-const updateBalanceLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 час
-  max: 500 // ограничение каждого IP до 10 запросов на обновление баланса за час
-});
-
 app.get('/getTonWebConfig', (req, res) => {
   res.json({
       IS_TESTNET,
@@ -70,6 +65,72 @@ app.get('/getTonWebConfig', (req, res) => {
       INDEX_API_URL
   });
 });
+
+function verifyTelegramWebAppData(telegramInitData) {
+  const initData = new URLSearchParams(telegramInitData);
+  const hash = initData.get('hash');
+  const dataToCheck = [];
+
+  initData.sort();
+  initData.forEach((val, key) => {
+    if (key !== 'hash') {
+      dataToCheck.push(`${key}=${val}`);
+    }
+  });
+
+  const secret = crypto.createHmac('sha256', 'WebAppData').update(process.env.TELEGRAM_TOKEN).digest();
+  const checkString = dataToCheck.join('\n');
+  const hmac = crypto.createHmac('sha256', secret).update(checkString).digest('hex');
+
+  return hmac === hash;
+}
+
+app.post('/auth', (req, res) => {
+  const telegramInitData = req.body.initData;
+  
+  if (verifyTelegramWebAppData(telegramInitData)) {
+    const initData = new URLSearchParams(telegramInitData);
+    const user = JSON.parse(initData.get('user'));
+    const telegramId = user.id.toString();
+
+    // Генерируем токен сессии
+    const sessionToken = crypto.randomBytes(64).toString('hex');
+
+    // Сохраняем токен в Firebase
+    database.ref(`users/${telegramId}/sessionToken`).set(sessionToken)
+      .then(() => {
+        res.json({ success: true, sessionToken });
+      })
+      .catch(error => {
+        console.error('Error saving session token:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      });
+  } else {
+    res.status(401).json({ error: 'Invalid Telegram data' });
+  }
+});
+
+async function authMiddleware(req, res, next) {
+  const sessionToken = req.headers['authorization'];
+  if (!sessionToken) {
+    return res.status(401).json({ error: 'No session token provided' });
+  }
+
+  try {
+    const userSnapshot = await database.ref('users').orderByChild('sessionToken').equalTo(sessionToken).once('value');
+    if (userSnapshot.exists()) {
+      const userData = userSnapshot.val();
+      const telegramId = Object.keys(userData)[0];
+      req.user = { telegramId, ...userData[telegramId] };
+      next();
+    } else {
+      res.status(401).json({ error: 'Invalid session token' });
+    }
+  } catch (error) {
+    console.error('Error in authMiddleware:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
 
 async function generateDepositAddress(telegramId) {
   console.log('Generating deposit address for Telegram ID:', telegramId);
@@ -861,22 +922,6 @@ async function initBlockSubscription() {
 
 initBlockSubscription().catch(console.error);
 
-// Функция защиты
-function verifyTelegramData(telegramData) {
-    const secret = crypto.createHash('sha256')
-        .update(token)
-        .digest();
-    const dataCheckString = Object.keys(telegramData)
-        .filter(key => key !== 'hash')
-        .sort()
-        .map(key => `${key}=${telegramData[key]}`)
-        .join('\n');
-    const hmac = crypto.createHmac('sha256', secret)
-        .update(dataCheckString)
-        .digest('hex');
-    return hmac === telegramData.hash;
-}
-
 app.post('/attemptTransferToHotWallet', async (req, res) => {
   console.log('Received POST request to /attemptTransferToHotWallet');
   console.log('Request body:', req.body);
@@ -912,18 +957,6 @@ app.post('/attemptTransferToHotWallet', async (req, res) => {
   }
 });
 
-// Роут аутентификации
-app.post('/auth', (req, res) => {
-  const telegramData = req.body;
-  if (verifyTelegramData(telegramData)) {
-      const token = crypto.randomBytes(64).toString('hex');
-      // Сохраняем токен в Firebase
-      database.ref('users/' + telegramData.id).set(token);
-      res.json({ token });
-  } else {
-      res.status(401).json({ error: 'Unauthorized' });
-  }
-});
 
 // Добавляем новые функции для работы с базой данных
 async function getUserData(telegramId) {
@@ -1124,30 +1157,26 @@ app.post('/farming', async (req, res) => {
   }
 });
 
-app.get('/farmingStatus', async (req, res) => {
-  const { telegramId } = req.query;
-  if (!telegramId) {
-      return res.status(400).json({ error: 'Telegram ID is required' });
-  }
+app.get('/farmingStatus', authMiddleware, async (req, res) => {
+  const telegramId = req.user.telegramId;
 
   try {
-      const userRef = database.ref('users/' + telegramId);
-      const snapshot = await userRef.once('value');
+    const userRef = database.ref('users/' + telegramId);
+    const snapshot = await userRef.once('value');
 
-      if (snapshot.exists()) {
-          const userData = snapshot.val();
-          const farmingState = userData.farmingState;
+    if (snapshot.exists()) {
+      const userData = snapshot.val();
+      const farmingState = userData.farmingState;
 
-          res.json({ farmingState });
-      } else {
-          res.status(404).json({ error: 'User not found' });
-      }
+      res.json({ farmingState });
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
   } catch (error) {
-      console.error('Error in farmingStatus:', error);
-      res.status(500).json({ error: 'Internal server error', details: error.message });
+    console.error('Error in farmingStatus:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
-
 // Обработчики команд бота
 bot.command('start', async (ctx) => {
   try {
