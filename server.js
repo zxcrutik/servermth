@@ -112,13 +112,17 @@ app.post('/auth',(req, res) => {
 });
 
 async function authMiddleware(req, res, next) {
-  const sessionToken = req.headers['authorization'];
-  if (!sessionToken) {
-    return res.status(401).json({ error: 'No session token provided' });
+  const authHeader = req.headers['authorization'];
+  if (!authHeader) {
+    return res.status(401).json({ error: 'No authorization header provided' });
   }
 
+  const token = authHeader.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
   try {
-    const userSnapshot = await database.ref('users').orderByChild('sessionToken').equalTo(sessionToken).once('value');
+    const userSnapshot = await database.ref('users').orderByChild('sessionToken').equalTo(token).once('value');
     if (userSnapshot.exists()) {
       const userData = userSnapshot.val();
       const telegramId = Object.keys(userData)[0];
