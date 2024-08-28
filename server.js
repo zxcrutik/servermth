@@ -42,22 +42,18 @@ const bot = new Telegraf(token);
 
 const rateLimit = require('express-rate-limit');
 
-const limiter = rateLimit({
+const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 минут
-  max: 5000 // ограничение каждого IP до 100 запросов за windowMs
+  max: 5000, // ограничение каждого IP до 5000 запросов за 15 минут
+  skip: (req) => {
+    // Пропускаем лимитер для определенных маршрутов
+    const skippedRoutes = ['/farmingStatus', '/getMiniGameEntryPrice'];
+    return skippedRoutes.includes(req.path);
+  }
 });
 
-const authLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 час
-  max: 100 // ограничение каждого IP до 25 запросов на аутентификацию за час
-});
-
-// Применяем этот лимитер только к маршрутам, начинающимся с /auth
-app.use('/auth', authLimiter);
-
-// Применяем ограничение ко всем запросам
-app.use(limiter);
-
+// Применяем общий лимитер ко всем запросам, кроме исключенных
+app.use(generalLimiter);
 app.get('/getTonWebConfig', (req, res) => {
   res.json({
       IS_TESTNET,
