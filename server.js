@@ -20,12 +20,10 @@ app.set('trust proxy', 1);
 app.use(bodyParser.json());
 
 app.use(cors({
-  origin: 'https://www.method-ton.space', 
+  origin: 'https://www.method-ton.space', // замените на ваш домен
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-  preflightContinue: false,
-  optionsSuccessStatus: 204
 }));
 app.options('*', cors()); // Обработка предварительных запросов для всех маршрутов
 
@@ -1155,20 +1153,20 @@ app.get('/farmingStatus', authMiddleware, async (req, res) => {
   const telegramId = req.user.telegramId;
 
   try {
-      const userRef = database.ref('users/' + telegramId);
-      const snapshot = await userRef.once('value');
+    const userRef = database.ref('users/' + telegramId);
+    const snapshot = await userRef.once('value');
 
-      if (snapshot.exists()) {
-          const userData = snapshot.val();
-          const farmingState = userData.farmingState;
+    if (snapshot.exists()) {
+      const userData = snapshot.val();
+      const farmingState = userData.farmingState;
 
-          res.json({ farmingState });
-      } else {
-          res.status(404).json({ error: 'User not found' });
-      }
+      res.json({ farmingState });
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
   } catch (error) {
-      console.error('Error in farmingStatus:', error);
-      res.status(500).json({ error: 'Internal server error', details: error.message });
+    console.error('Error in farmingStatus:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 // Обработчики команд бота
