@@ -93,10 +93,8 @@ app.post('/auth', (req, res) => {
     const user = JSON.parse(initData.get('user'));
     const telegramId = user.id.toString();
 
-    // Генерируем токен сессии
     const sessionToken = crypto.randomBytes(64).toString('hex');
 
-    // Сохраняем токен в Firebase
     database.ref(`users/${telegramId}/sessionToken`).set(sessionToken)
       .then(() => {
         res.json({ success: true, sessionToken });
@@ -1161,20 +1159,20 @@ app.get('/farmingStatus', authMiddleware, async (req, res) => {
   const telegramId = req.user.telegramId;
 
   try {
-    const userRef = database.ref('users/' + telegramId);
-    const snapshot = await userRef.once('value');
+      const userRef = database.ref('users/' + telegramId);
+      const snapshot = await userRef.once('value');
 
-    if (snapshot.exists()) {
-      const userData = snapshot.val();
-      const farmingState = userData.farmingState;
+      if (snapshot.exists()) {
+          const userData = snapshot.val();
+          const farmingState = userData.farmingState;
 
-      res.json({ farmingState });
-    } else {
-      res.status(404).json({ error: 'User not found' });
-    }
+          res.json({ farmingState });
+      } else {
+          res.status(404).json({ error: 'User not found' });
+      }
   } catch (error) {
-    console.error('Error in farmingStatus:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+      console.error('Error in farmingStatus:', error);
+      res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 // Обработчики команд бота
