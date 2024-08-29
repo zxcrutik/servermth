@@ -1288,18 +1288,96 @@ app.post('/createUser', async (req, res) => {
 });
 
 app.post('/updateUserData', async (req, res) => {
-  const { telegramId, ...updateData } = req.body;
-  if (!telegramId) {
-    return res.status(400).json({ error: 'Telegram ID не предоставлен' });
+  const { telegramId, updateData } = req.body;
+  
+  if (!telegramId || !updateData) {
+    return res.status(400).json({ error: 'Telegram ID and update data are required' });
   }
+
   try {
-    await database.ref(`users/${telegramId}`).update(updateData);
-    res.sendStatus(200);
+    const userRef = database.ref(`users/${telegramId}`);
+    await userRef.update(updateData);
+    res.json({ success: true });
   } catch (error) {
-    console.error('Ошибка при обновлении данных пользователя:', error);
-    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    console.error('Error updating user data:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
+
+app.post('/handleLogoClick', async (req, res) => {
+  const { telegramId } = req.body;
+  if (!telegramId) {
+    return res.status(400).json({ error: 'Telegram ID is required' });
+  }
+  try {
+    const result = await handleLogoClickServer(telegramId);
+    res.json(result);
+  } catch (error) {
+    console.error('Error in /handleLogoClick:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+async function handleLogoClickServer(telegramId) {
+  const userRef = database.ref('users/' + telegramId);
+  const snapshot = await userRef.once('value');
+  if (snapshot.exists()) {
+    const userData = snapshot.val();
+    const currentTime = Date.now();
+    const lastClickTime = userData.lastClickTime || 0;
+    const clickCount = userData.clickCount || 0;
+    const bonusEndTime = userData.bonusEndTime || 0;
+    
+    let reward;
+    let newClickCount;
+    
+    if (currentTime > bonusEndTime || clickCount === 0) {
+      reward = BASE_REWARD;
+      newClickCount = 1;
+    } else if (currentTime - lastClickTime >= COOLDOWN_TIME) {
+      newClickCount = clickCount + 1;
+      reward = Math.min(BASE_REWARD * newClickCount, MAX_REWARD);
+    } else {
+      return { success: false, cooldownRemaining: lastClickTime + COOLDOWN_TIME - currentTime };
+    }
+
+    await userRef.update({
+      clickCount: newClickCount,
+      lastClickTime: currentTime,
+      bonusEndTime: currentTime + COOLDOWN_TIME + BONUS_TIME
+    });
+
+    const newTotalFarmed = await updateTotalFarmed(telegramId, reward);
+    
+    return { success: true, reward, newTotalFarmed, cooldownTime: COOLDOWN_TIME };
+  } else {
+    throw new Error('User not found');
+  }
+}
+
+app.post('/resetRewardProgress', async (req, res) => {
+  const { telegramId } = req.body;
+  if (!telegramId) {
+    return res.status(400).json({ error: 'Telegram ID is required' });
+  }
+  try {
+    await resetRewardProgressServer(telegramId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error in /resetRewardProgress:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+async function resetRewardProgressServer(telegramId) {
+  const currentTime = Date.now();
+  const userRef = database.ref('users/' + telegramId);
+  await userRef.update({
+    clickCount: 1,
+    lastClickTime: currentTime,
+    bonusEndTime: currentTime + COOLDOWN_TIME + BONUS_TIME
+  });
+}
 
 app.get('/getUserReferralLink', async (req, res) => {
   let telegramId = req.query.telegramId || (req.user && req.user.telegramId);
