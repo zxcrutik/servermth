@@ -1281,7 +1281,7 @@ app.post('/createUser', async (req, res) => {
   }
   try {
       const userData = await createUser(telegramId, telegramUsername);
-      res.status(200).json({ message: 'Пользователь успешно создан', userData });
+      res.status(200).json({ success: true, userData });
   } catch (error) {
       console.error('Ошибка при создании пользователя:', error);
       res.status(500).json({ error: 'Внутренняя ошибка сервера' });
