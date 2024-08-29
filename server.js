@@ -1287,6 +1287,20 @@ app.post('/createUser', async (req, res) => {
     }
 });
 
+app.post('/updateUserData', async (req, res) => {
+  const { telegramId, ...updateData } = req.body;
+  if (!telegramId) {
+    return res.status(400).json({ error: 'Telegram ID не предоставлен' });
+  }
+  try {
+    await database.ref(`users/${telegramId}`).update(updateData);
+    res.sendStatus(200);
+  } catch (error) {
+    console.error('Ошибка при обновлении данных пользователя:', error);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+  }
+});
+
 app.get('/getUserReferralLink', async (req, res) => {
   let telegramId = req.query.telegramId || (req.user && req.user.telegramId);
   
