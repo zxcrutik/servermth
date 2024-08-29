@@ -973,6 +973,7 @@ async function getUserData(telegramId) {
 async function createUser(telegramId, telegramUsername) {
   const userData = {
     telegramId: telegramId,
+    telegramUsername: telegramUsername,
     totalFarmed: 0,
     mthtotalfarmed: 0,
     ticketBalance: 10,
