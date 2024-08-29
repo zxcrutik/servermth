@@ -993,6 +993,7 @@ async function createUser(telegramId, telegramUsername) {
   }
 
   await database.ref(`users/${telegramId}`).set(userData);
+  return userData;
 }
 
 async function getUserReferralLink(telegramId) {
@@ -1274,17 +1275,17 @@ app.post('/botWebhook', (req, res) => {
 });
 
 app.post('/createUser', async (req, res) => {
-    const { telegramId, telegramUsername } = req.body;
-    if (!telegramId || !telegramUsername) {
-        return res.status(400).json({ error: 'Не предоставлены telegramId или telegramUsername' });
-    }
-    try {
-        await createUser(telegramId, telegramUsername);
-        res.sendStatus(200);
-    } catch (error) {
-        console.error('Ошибка при создании пользователя:', error);
-        res.status(500).json({ error: 'Внутренняя ошибка сервера' });
-    }
+  const { telegramId, telegramUsername } = req.body;
+  if (!telegramId || !telegramUsername) {
+      return res.status(400).json({ error: 'Не предоставлены telegramId или telegramUsername' });
+  }
+  try {
+      const userData = await createUser(telegramId, telegramUsername);
+      res.status(200).json({ message: 'Пользователь успешно создан', userData });
+  } catch (error) {
+      console.error('Ошибка при создании пользователя:', error);
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+  }
 });
 
 app.post('/updateUserData', async (req, res) => {
