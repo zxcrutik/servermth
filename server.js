@@ -963,6 +963,32 @@ app.post('/attemptTransferToHotWallet', async (req, res) => {
   }
 });
 
+app.post('/updateTaskTicketBalance', async (req, res) => {
+  const { telegramId, taskType } = req.body;
+
+  if (!telegramId || !taskType) {
+    return res.status(400).json({ error: 'Требуется указать telegramId и taskType' });
+  }
+
+  try {
+    const userRef = database.ref(`users/${telegramId}`);
+    const snapshot = await userRef.once('value');
+    const userData = snapshot.val() || {};
+
+    const currentTicketBalance = userData.ticketBalance || 0;
+    const newTicketBalance = currentTicketBalance + 2; // Добавляем 2 тикета за каждую задачу
+
+    await userRef.update({
+      ticketBalance: newTicketBalance,
+      [`${taskType}Completed`]: true
+    });
+
+    res.json({ success: true, newTicketBalance });
+  } catch (error) {
+    console.error('Ошибка при обновлении баланса тикетов за задачу:', error);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+  }
+});
 
 // Добавляем новые функции для работы с базой данных
 async function getUserData(telegramId) {
