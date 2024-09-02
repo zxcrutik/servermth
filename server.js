@@ -1371,6 +1371,34 @@ app.get('/reward', async (req, res) => {
   }
 });
 
+app.get('/getUserInitialData', async (req, res) => {
+  const telegramId = req.query.telegramId;
+  if (!telegramId) {
+    return res.status(400).json({ error: 'Telegram ID не предоставлен' });
+  }
+  try {
+    const [userData, miniGameEntryPrice] = await Promise.all([
+      getUserData(telegramId),
+      getMiniGameEntryPrice(telegramId)
+    ]);
+    
+    const farmingStatusResponse = await fetch(`${req.protocol}://${req.get('host')}/farmingStatus?telegramId=${telegramId}`);
+    const farmingStatus = await farmingStatusResponse.json();
+
+    const tonWebConfig = { IS_TESTNET, NODE_API_URL, INDEX_API_URL };
+
+    res.json({
+      userData,
+      miniGameEntryPrice,
+      farmingStatus,
+      tonWebConfig
+    });
+  } catch (error) {
+    console.error('Ошибка при получении начальных данных пользователя:', error);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+  }
+});
+
 //логирование для отладки
   app.get('/', (req, res) => {
     res.status(200).send('Server is running');
