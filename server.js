@@ -1350,6 +1350,27 @@ app.get('/getUserReferralLink', async (req, res) => {
   }
 });
   
+app.get('/reward', async (req, res) => {
+  const telegramId = req.query.telegramId;
+
+  if (!telegramId) {
+    return res.status(400).send('Telegram ID is required');
+  }
+
+  try {
+    const userRef = database.ref('users/' + telegramId);
+    await userRef.update({ adsgramTaskCompleted: true });
+
+    // Обновляем баланс тикетов
+    await updateTaskTicketBalance(telegramId, 'adsgramTask');
+
+    res.status(200).send('OK');
+  } catch (error) {
+    console.error('Error updating Adsgram task status:', error);
+    res.status(500).send('Internal Server Error');
+  }
+});
+
 //логирование для отладки
   app.get('/', (req, res) => {
     res.status(200).send('Server is running');
