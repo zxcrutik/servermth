@@ -1350,21 +1350,59 @@ app.get('/getUserReferralLink', async (req, res) => {
   }
 });
   
-app.get('/reward', async (req, res) => {
-  const telegramId = req.query.telegramId;
+async function updateTaskTicketBalance(telegramId, taskType) {
+  const userRef = database.ref(`users/${telegramId}`);
+  const snapshot = await userRef.once('value');
+  const userData = snapshot.val() || {};
 
-  if (!telegramId) {
-    return res.status(400).send('Telegram ID is required');
+  const currentTicketBalance = userData.ticketBalance || 0;
+  const newTicketBalance = currentTicketBalance + 2; // Добавляем 2 тикета за каждую задачу
+
+  await userRef.update({
+    ticketBalance: newTicketBalance,
+    [`${taskType}Completed`]: true
+  });
+
+  return newTicketBalance;
+}
+
+app.get('/reward', async (req, res) => {
+  const { telegramId, uniqueId } = req.query;
+
+  if (!telegramId || !uniqueId) {
+    return res.status(400).send('Telegram ID and Unique ID are required');
   }
 
   try {
     const userRef = database.ref('users/' + telegramId);
-    await userRef.update({ adsgramTaskCompleted: true });
+    const snapshot = await userRef.once('value');
+    const userData = snapshot.val() || {};
 
-    // Обновляем баланс тикетов
-    await updateTaskTicketBalance(telegramId, 'adsgramTask');
+    if (userData.lastRewardUniqueId === uniqueId) {
+      return res.status(200).send('Reward already processed');
+    }
 
-    res.status(200).send('OK');
+    const adWatchCount = (userData.adWatchCount || 0) + 1;
+    
+    if (adWatchCount >= 2) {
+      // Обновляем баланс тикетов
+      const newTicketBalance = await updateTaskTicketBalance(telegramId, 'adsgramTask');
+      
+      await userRef.update({
+        adWatchCount: 0,
+        lastAdsgramTaskTime: Date.now(),
+        lastRewardUniqueId: uniqueId
+      });
+
+      res.status(200).json({ success: true, newTicketBalance });
+    } else {
+      await userRef.update({
+        adWatchCount: adWatchCount,
+        lastRewardUniqueId: uniqueId
+      });
+
+      res.status(200).json({ success: true, adWatchCount });
+    }
   } catch (error) {
     console.error('Error updating Adsgram task status:', error);
     res.status(500).send('Internal Server Error');
