@@ -996,10 +996,14 @@ async function getUserData(telegramId) {
   return snapshot.exists() ? snapshot.val() : null;
 }
 
+function generateRandomUsername() {
+  return `method_user${Math.floor(Math.random() * 1000000)}`;
+}
+
 async function createUser(telegramId, telegramUsername) {
   const userData = {
     telegramId: telegramId,
-    telegramUsername: telegramUsername,
+    telegramUsername: telegramUsername || generateRandomUsername(),
     totalFarmed: 0,
     mthtotalfarmed: 0,
     ticketBalance: 10,
@@ -1013,11 +1017,6 @@ async function createUser(telegramId, telegramUsername) {
       endTime: null
     }
   };
-
-  // Добавляем telegramUsername только если он существует
-  if (telegramUsername) {
-      userData.telegramUsername = telegramUsername;
-  }
 
   await database.ref(`users/${telegramId}`).set(userData);
   return userData;
@@ -1217,7 +1216,7 @@ bot.command('start', async (ctx) => {
     console.log('/start command called');
     const user = ctx.message.from;
     const telegramId = user.id.toString();
-    const telegramUsername = user.username;
+    let telegramUsername = user.username;
     const startPayload = ctx.message.text.split(' ')[1];
 
     console.log('Payload:', startPayload);
@@ -1225,14 +1224,17 @@ bot.command('start', async (ctx) => {
     let userData = await getUserData(telegramId);
     console.log('User data from Firebase:', userData);
 
-    // Обновляем username, если он изменился
-    if (userData && userData.telegramUsername !== telegramUsername) {
-      await database.ref(`users/${telegramId}`).update({ telegramUsername: telegramUsername });
+    if (!telegramUsername) {
+      telegramUsername = generateRandomUsername();
     }
 
-    if (!userData) {
-      await createUser(telegramId, telegramUsername);
-      userData = await getUserData(telegramId);
+    if (userData) {
+      // Обновляем username, если он изменился или отсутствовал
+      if (userData.telegramUsername !== telegramUsername) {
+        await database.ref(`users/${telegramId}`).update({ telegramUsername: telegramUsername });
+      }
+    } else {
+      userData = await createUser(telegramId, telegramUsername);
 
       if (startPayload) {
         const inviterSnapshot = await database.ref(`inviteCodes/${startPayload}`).once('value');
@@ -1249,13 +1251,13 @@ bot.command('start', async (ctx) => {
 const communityButton = Markup.button.url('Join to Community💎', 'https://t.me/method_community');
 
     await ctx.reply(
-      'Добро пожаловать в Method! ☑️\n\n' +
-      'Вот что вы можете сделать с Method прямо сейчас:\n\n' +
-      '📊 Farm $MTHC: Начинайте фармить $MTHC, чтобы в будущем обменять валюту на наш токен $MTH или же $TON\n' +
-      '🤖 Приглашайте друзей: Приведите своих друзей, чтобы получить больше $MTHC! Больше друзей = больше $MTHC\n' +
-      '✅ Выполняйте задания: Завершайте задачи и зарабатывайте еще больше $MTHC!\n\n' +
-      'Начните зарабатывать $MTHC уже сейчас, и, возможно, в будущем вас ждут удивительные награды! 🚀\n\n' +
-      'Оставайтесь с METHOD!💎', 
+      'Welcome to Method! ☑️\n\n' +
+      'What you can do with Method right now:\n\n' +
+      '📊 Farm $MTHC: Start farming $MTHC to exchange the currency for our $MTH token or $TON token in the future\n' +
+      '🤖 Invite Friends: Bring your friends to get more $MTHC! More friends = more $MTHC\n' +
+      '✅ Complete tasks: Complete tasks and earn even more $MTHC!\n\n' +
+      'Start earning $MTHC now, amazing rewards await you! 🚀\n\n' +
+      'Stay with METHOD!💎', 
       Markup.inlineKeyboard([
         [enterButton],
         [communityButton]
@@ -1406,34 +1408,6 @@ app.get('/reward', async (req, res) => {
   } catch (error) {
     console.error('Error updating Adsgram task status:', error);
     res.status(500).send('Internal Server Error');
-  }
-});
-
-app.get('/getUserInitialData', async (req, res) => {
-  const telegramId = req.query.telegramId;
-  if (!telegramId) {
-    return res.status(400).json({ error: 'Telegram ID не предоставлен' });
-  }
-  try {
-    const [userData, miniGameEntryPrice] = await Promise.all([
-      getUserData(telegramId),
-      getMiniGameEntryPrice(telegramId)
-    ]);
-    
-    const farmingStatusResponse = await fetch(`${req.protocol}://${req.get('host')}/farmingStatus?telegramId=${telegramId}`);
-    const farmingStatus = await farmingStatusResponse.json();
-
-    const tonWebConfig = { IS_TESTNET, NODE_API_URL, INDEX_API_URL };
-
-    res.json({
-      userData,
-      miniGameEntryPrice,
-      farmingStatus,
-      tonWebConfig
-    });
-  } catch (error) {
-    console.error('Ошибка при получении начальных данных пользователя:', error);
-    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
