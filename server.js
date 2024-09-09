@@ -1141,10 +1141,12 @@ app.post('/updateTotalFarmed', async (req, res) => {
   }
 });
 
-app.post('/farming', async (req, res) => {
-  const { telegramId, action } = req.body;
-  if (!telegramId || !action) {
-      return res.status(400).json({ error: 'Telegram ID and action are required' });
+app.post('/farming', authMiddleware, async (req, res) => {
+  const telegramId = req.user.telegramId;
+  const { action } = req.body;
+
+  if (!action) {
+    return res.status(400).json({ error: 'Action is required' });
   }
 
   try {
