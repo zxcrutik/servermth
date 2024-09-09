@@ -993,16 +993,7 @@ app.post('/updateTaskTicketBalance', async (req, res) => {
 // Добавляем новые функции для работы с базой данных
 async function getUserData(telegramId) {
   const snapshot = await database.ref(`users/${telegramId}`).once('value');
-  if (snapshot.exists()) {
-    const userData = snapshot.val();
-    // Удаляем только конфиденциальные данные кошелька
-    if (userData.wallet) {
-      delete userData.wallet.secretKey;
-      delete userData.wallet.publicKey;
-    }
-    return userData;
-  }
-  return null;
+  return snapshot.exists() ? snapshot.val() : null;
 }
 
 function generateRandomUsername() {
@@ -1141,12 +1132,10 @@ app.post('/updateTotalFarmed', async (req, res) => {
   }
 });
 
-app.post('/farming', authMiddleware, async (req, res) => {
-  const telegramId = req.user.telegramId;
-  const { action } = req.body;
-
-  if (!action) {
-    return res.status(400).json({ error: 'Action is required' });
+app.post('/farming', async (req, res) => {
+  const { telegramId, action } = req.body;
+  if (!telegramId || !action) {
+      return res.status(400).json({ error: 'Telegram ID and action are required' });
   }
 
   try {
@@ -1296,41 +1285,35 @@ app.post('/botWebhook', (req, res) => {
     bot.handleUpdate(req.body, res);
   });
   
-  app.get('/getUserData', authMiddleware, async (req, res) => {
-    const authenticatedTelegramId = req.user.telegramId;
-    const requestedTelegramId = req.query.telegramId;
-  
-    // Проверяем, совпадает ли запрошенный telegramId с аутентифицированным
-    if (requestedTelegramId && requestedTelegramId !== authenticatedTelegramId) {
-      return res.status(403).json({ error: 'Access denied' });
+  app.get('/getUserData', async (req, res) => {
+    const telegramId = req.query.telegramId;
+    if (!telegramId) {
+        return res.status(400).json({ error: 'Telegram ID не предоставлен' });
     }
-  
-    const telegramId = authenticatedTelegramId;
-  
     try {
-      const userData = await getUserData(telegramId);
-      if (userData) {
-        res.json(userData);
-      } else {
-        res.status(404).json({ error: 'User not found' });
-      }
+        const userData = await getUserData(telegramId);
+        if (userData) {
+            res.json(userData);
+        } else {
+            res.status(404).json({ error: 'Пользователь не найден' });
+        }
     } catch (error) {
-      console.error('Error getting user data:', error);
-      res.status(500).json({ error: 'Internal server error' });
+        console.error('Ошибка при получении данных пользователя:', error);
+        res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
-  });
+});
 
 app.post('/createUser', async (req, res) => {
   const { telegramId, telegramUsername } = req.body;
   if (!telegramId || !telegramUsername) {
-      return res.status(400).json({ error: 'Telegram ID or username not provided' });
+      return res.status(400).json({ error: 'Не предоставлены telegramId или telegramUsername' });
   }
   try {
       const userData = await createUser(telegramId, telegramUsername);
       res.status(200).json({ success: true, userData });
   } catch (error) {
-      console.error('Error creating user:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      console.error('Ошибка при создании пользователя:', error);
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -1358,14 +1341,14 @@ app.get('/getUserReferralLink', async (req, res) => {
   telegramId = telegramId ? telegramId.replace('$', '') : null;
 
   if (!telegramId) {
-      return res.status(400).json({ error: 'Telegram ID not provided' });
+      return res.status(400).json({ error: 'Telegram ID не предоставлен' });
   }
   try {
       const referralLink = await getUserReferralLink(telegramId);
       res.json({ referralLink });
   } catch (error) {
-      console.error('Error getting referral link:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      console.error('Ошибка при получении реферальной ссылки:', error);
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
   
