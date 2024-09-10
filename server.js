@@ -20,11 +20,21 @@ app.set('trust proxy', 1);
 app.use(bodyParser.json());
 
 app.use(cors({
-  origin: 'https://www.method-ton.space', // замените на ваш домен
+  origin: 'https://www.method-ton.space',
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
   credentials: true,
 }));
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'https://www.method-ton.space');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 app.options('*', cors()); // Обработка предварительных запросов для всех маршрутов
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
