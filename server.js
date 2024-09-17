@@ -1003,7 +1003,15 @@ app.post('/updateTaskTicketBalance', async (req, res) => {
 // Добавляем новые функции для работы с базой данных
 async function getUserData(telegramId) {
   const snapshot = await database.ref(`users/${telegramId}`).once('value');
-  return snapshot.exists() ? snapshot.val() : null;
+  if (snapshot.exists()) {
+    const userData = snapshot.val();
+    // Удаляем чувствительные данные
+    if (userData.wallet) {
+      delete userData.wallet.secretKey;
+    }
+    return userData;
+  }
+  return null;
 }
 
 function generateRandomUsername() {
