@@ -1258,7 +1258,11 @@ bot.command('start', async (ctx) => {
         const inviterSnapshot = await database.ref(`inviteCodes/${startPayload}`).once('value');
         if (inviterSnapshot.exists()) {
           const inviterId = inviterSnapshot.val().telegramId;
-          await database.ref(`users/${inviterId}/friendsCount`).transaction(count => (count || 0) + 1);
+          await database.ref(`users/${inviterId}/friendsCount`).transaction(count => {
+            const newCount = (count || 0) + 1;
+            sendNewFriendNotification(inviterId, newCount, telegramUsername);
+            return newCount;
+          });
           await database.ref(`users/${telegramId}/invitedBy`).set(inviterId);
           console.log(`User ${telegramId} was invited by ${inviterId}`);
         }
@@ -1369,6 +1373,17 @@ app.get('/getUserReferralLink', async (req, res) => {
       res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
+
+async function sendNewFriendNotification(inviterId, friendsCount, newFriendUsername) {
+  try {
+    let message = `🎉 Good News! You have a new friend: @${newFriendUsername}!\n\nNow you have ${friendsCount} ${friendsCount === 1 ? 'friend' : 'friends'}.`;
+
+    await bot.telegram.sendMessage(inviterId, message);
+    console.log(`Notification sent to user ${inviterId}`);
+  } catch (error) {
+    console.error('Error sending notification:', error);
+  }
+}
   
 async function updateTaskTicketBalance(telegramId, taskType) {
   const userRef = database.ref(`users/${telegramId}`);
