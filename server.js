@@ -1258,11 +1258,15 @@ bot.command('start', async (ctx) => {
         const inviterSnapshot = await database.ref(`inviteCodes/${startPayload}`).once('value');
         if (inviterSnapshot.exists()) {
           const inviterId = inviterSnapshot.val().telegramId;
+          let newCount;
           await database.ref(`users/${inviterId}/friendsCount`).transaction(count => {
-            const newCount = (count || 0) + 1;
-            sendNewFriendNotification(inviterId, newCount, telegramUsername);
+            newCount = (count || 0) + 1;
             return newCount;
           });
+          if (newCount !== undefined) {
+            await sendNewFriendNotification(inviterId, newCount, telegramUsername);
+          }
+          
           await database.ref(`users/${telegramId}/invitedBy`).set(inviterId);
           console.log(`User ${telegramId} was invited by ${inviterId}`);
         }
